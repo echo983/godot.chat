@@ -39,7 +39,10 @@ export interface Messages {
     recoveryInputPlaceholder: string;
     recoveryRestoreButton: string;
     onlineLabel: string;
+    onlineBtnTitle: string;
     onlineListTitle: string;
+    onlineListHint: string;
+    whisperRowTitle: string;
     whisperWith: string;
     whisperPlaceholder: string;
     closeLabel: string;
@@ -87,7 +90,10 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryInputPlaceholder: "Paste recovery code",
       recoveryRestoreButton: "Restore",
       onlineLabel: "{count} online",
+      onlineBtnTitle: "Click to see who's online",
       onlineListTitle: "Who's here",
+      onlineListHint: "Click someone's name to send them a private message.",
+      whisperRowTitle: "Click to whisper",
       whisperWith: "Private message to {nickname}",
       whisperPlaceholder: "Send a private message…",
       closeLabel: "Close",
@@ -133,7 +139,10 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryInputPlaceholder: "Pega el código de recuperación",
       recoveryRestoreButton: "Restaurar",
       onlineLabel: "{count} en línea",
+      onlineBtnTitle: "Haz clic para ver quién está en línea",
       onlineListTitle: "Quién está aquí",
+      onlineListHint: "Haz clic en el nombre de alguien para enviarle un mensaje privado.",
+      whisperRowTitle: "Haz clic para enviar un mensaje privado",
       whisperWith: "Mensaje privado a {nickname}",
       whisperPlaceholder: "Envía un mensaje privado…",
       closeLabel: "Cerrar",
@@ -177,7 +186,10 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryInputPlaceholder: "粘贴恢复码",
       recoveryRestoreButton: "恢复",
       onlineLabel: "在线 {count} 人",
+      onlineBtnTitle: "点击查看在线列表",
       onlineListTitle: "在线列表",
+      onlineListHint: "点击某人的名字可以给 TA 发私聊消息。",
+      whisperRowTitle: "点击私聊",
       whisperWith: "私聊 {nickname}",
       whisperPlaceholder: "发一句悄悄话…",
       closeLabel: "关闭",
@@ -221,7 +233,10 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryInputPlaceholder: "貼上復原碼",
       recoveryRestoreButton: "復原",
       onlineLabel: "在線 {count} 人",
+      onlineBtnTitle: "點擊查看在線列表",
       onlineListTitle: "在線列表",
+      onlineListHint: "點擊某人的名字可以傳私訊給 TA。",
+      whisperRowTitle: "點擊傳私訊",
       whisperWith: "私訊 {nickname}",
       whisperPlaceholder: "傳一句悄悄話…",
       closeLabel: "關閉",

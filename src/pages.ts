@@ -140,7 +140,7 @@ export function renderChatPage(room: string, locale: Locale): string {
 <body>
   <header>
     <span class="room">#${room}</span>
-    <span id="onlineBtn"></span>
+    <span id="onlineBtn" title="${m.onlineBtnTitle}"></span>
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
   </header>
@@ -184,6 +184,7 @@ export function renderChatPage(room: string, locale: Locale): string {
       <h2>${m.onlineListTitle}</h2>
       <button type="button" class="dialog-close" id="onlineDialogClose" aria-label="${m.closeLabel}">×</button>
     </div>
+    <p class="hint">${m.onlineListHint}</p>
     <div id="onlineList"></div>
   </dialog>
 
@@ -338,6 +339,7 @@ export function renderChatPage(room: string, locale: Locale): string {
         row.appendChild(label);
 
         if (u.hashId !== myHashId) {
+          row.title = I18N.chat.whisperRowTitle;
           row.addEventListener('click', () => {
             onlineDialog.close();
             openWhisper(u.hashId, u.nickname);
