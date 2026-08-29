@@ -2,6 +2,7 @@ import { normalizeRoomName } from "./room-name";
 import { renderChatPage, renderLandingPage } from "./pages";
 import { resolveLocale } from "./i18n";
 import { readBodyCapped } from "./body-utils";
+import { createRateLimiter } from "./rate-limit";
 import { ChatRoom } from "./chat-room";
 import { RoomRegistry } from "./room-registry";
 
@@ -27,13 +28,15 @@ const HTML_HEADERS = {
 };
 
 const CLIENT_ERROR_MAX_BYTES = 4096;
-const CLIENT_ERROR_RATE_LIMIT_WINDOW_MS = 60_000;
-const CLIENT_ERROR_RATE_LIMIT_MAX = 5;
 
-// 按 IP 做的内存限流,只在当前 isolate 生命周期内有效,不追求全局精确——
-// 这是个诊断用的轻量接口,不值得为了防刷起一个 Durable Object。isolate 被回收
-// 就重置,Map 大小也做了个粗糙上限防止真被刷爆时无限增长
-const clientErrorCounts = new Map<string, { count: number; windowStart: number }>();
+const isClientErrorRateLimited = createRateLimiter({ windowMs: 60_000, max: 5, maxTrackedKeys: 5000 });
+
+// 挡在 RoomRegistry/ChatRoom 之前的第一道门——页面加载(GET)和 WS 握手尝试之前
+// 完全没有速率限制:MAX_CONNECTIONS_PER_IP 只管"同时开着几个连接",不管"每秒
+// 发起几次连接尝试",脚本可以疯狂开连接立刻断开来绕过它,每次尝试还都会打到
+// 全站唯一的 RoomRegistry(拖慢所有房间的注册表查询)和渲染整页 HTML。
+// 60/10秒(平均每秒6次)够正常刷新/重连用,挡不住脚本式高频请求。
+const isGeneralRateLimited = createRateLimiter({ windowMs: 10_000, max: 60 });
 
 /**
  * 前端上报的运行时错误,只 console.error 出去进 Workers Logs,不落盘存储。
@@ -46,17 +49,8 @@ async function handleClientError(request: Request, host: string, ip: string): Pr
     return new Response("Method not allowed", { status: 405 });
   }
 
-  const now = Date.now();
-  if (clientErrorCounts.size > 5000) clientErrorCounts.clear();
-
-  const entry = clientErrorCounts.get(ip);
-  if (!entry || now - entry.windowStart > CLIENT_ERROR_RATE_LIMIT_WINDOW_MS) {
-    clientErrorCounts.set(ip, { count: 1, windowStart: now });
-  } else {
-    entry.count++;
-    if (entry.count > CLIENT_ERROR_RATE_LIMIT_MAX) {
-      return new Response("Too many reports", { status: 429 });
-    }
+  if (isClientErrorRateLimited(ip, Date.now())) {
+    return new Response("Too many reports", { status: 429 });
   }
 
   const body = await readBodyCapped(request, CLIENT_ERROR_MAX_BYTES);
@@ -83,6 +77,11 @@ export default {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
     const rootDomain = env.ROOT_DOMAIN;
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+
+    if (isGeneralRateLimited(ip, Date.now())) {
+      return new Response("Too many requests", { status: 429 });
+    }
 
     const isLandingHost = host === rootDomain || host === `www.${rootDomain}`;
     if (HIDE_LANDING_PAGE && isLandingHost) {
@@ -90,7 +89,6 @@ export default {
     }
 
     const locale = resolveLocale(request);
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
 
     if (url.pathname === "/robots.txt") {
       return handleRobotsTxt(host, rootDomain);
