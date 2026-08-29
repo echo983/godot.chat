@@ -46,6 +46,7 @@ export interface Messages {
     whisperWith: string;
     whisperPlaceholder: string;
     closeLabel: string;
+    ogDescription: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
@@ -97,6 +98,7 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperWith: "Private message to {nickname}",
       whisperPlaceholder: "Send a private message…",
       closeLabel: "Close",
+      ogDescription: "Live chat in #{room} on godot.chat",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
@@ -146,6 +148,7 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperWith: "Mensaje privado a {nickname}",
       whisperPlaceholder: "Envía un mensaje privado…",
       closeLabel: "Cerrar",
+      ogDescription: "Chat en vivo en #{room} en godot.chat",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
@@ -193,6 +196,7 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperWith: "私聊 {nickname}",
       whisperPlaceholder: "发一句悄悄话…",
       closeLabel: "关闭",
+      ogDescription: "godot.chat 上的 #{room} 实时聊天室",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
@@ -240,6 +244,7 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperWith: "私訊 {nickname}",
       whisperPlaceholder: "傳一句悄悄話…",
       closeLabel: "關閉",
+      ogDescription: "godot.chat 上的 #{room} 即時聊天室",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",

@@ -23,13 +23,21 @@ const HTML_HEADERS = {
 };
 
 const CLIENT_ERROR_MAX_BYTES = 4096;
+const CLIENT_ERROR_RATE_LIMIT_WINDOW_MS = 60_000;
+const CLIENT_ERROR_RATE_LIMIT_MAX = 5;
+
+// 按 IP 做的内存限流,只在当前 isolate 生命周期内有效,不追求全局精确——
+// 这是个诊断用的轻量接口,不值得为了防刷起一个 Durable Object。isolate 被回收
+// 就重置,Map 大小也做了个粗糙上限防止真被刷爆时无限增长
+const clientErrorCounts = new Map<string, { count: number; windowStart: number }>();
 
 /**
  * 前端上报的运行时错误,只 console.error 出去进 Workers Logs,不落盘存储。
  * Content-Length 检查只是提前拒绝明显超大的请求,不是严格的字节上限——
- * 这是个诊断用的轻量接口,不值得为了防少量滥用把它做复杂。
+ * 这是个诊断用的轻量接口,不值得为了防少量滥用把它做复杂,但完全不设限的话
+ * 任何网站都能跨站悄悄往这灌垃圾把真正的错误淹没掉,所以还是加个粗略限流。
  */
-async function handleClientError(request: Request, host: string): Promise<Response> {
+async function handleClientError(request: Request, host: string, ip: string): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -39,10 +47,29 @@ async function handleClientError(request: Request, host: string): Promise<Respon
     return new Response("Payload too large", { status: 413 });
   }
 
+  const now = Date.now();
+  if (clientErrorCounts.size > 5000) clientErrorCounts.clear();
+
+  const entry = clientErrorCounts.get(ip);
+  if (!entry || now - entry.windowStart > CLIENT_ERROR_RATE_LIMIT_WINDOW_MS) {
+    clientErrorCounts.set(ip, { count: 1, windowStart: now });
+  } else {
+    entry.count++;
+    if (entry.count > CLIENT_ERROR_RATE_LIMIT_MAX) {
+      return new Response("Too many reports", { status: 429 });
+    }
+  }
+
   const body = await request.text();
   console.error("[client-error]", host, body.slice(0, CLIENT_ERROR_MAX_BYTES));
 
   return new Response(null, { status: 204 });
+}
+
+function handleRobotsTxt(host: string): Response {
+  const isRoomHost = host !== ROOT_DOMAIN && host !== `www.${ROOT_DOMAIN}`;
+  const body = isRoomHost ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\n";
+  return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
 export default {
@@ -51,9 +78,14 @@ export default {
     const host = url.hostname.toLowerCase();
 
     const locale = resolveLocale(request);
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+
+    if (url.pathname === "/robots.txt") {
+      return handleRobotsTxt(host);
+    }
 
     if (url.pathname === "/client-error") {
-      return handleClientError(request, host);
+      return handleClientError(request, host, ip);
     }
 
     if (host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}`) {
@@ -76,7 +108,6 @@ export default {
 
     const room = validation.room;
 
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     const registry = env.ROOM_REGISTRY.get(env.ROOM_REGISTRY.idFromName("global"));
     const { allowed } = await registry.checkRoomAccess(room, ip);
     if (!allowed) {

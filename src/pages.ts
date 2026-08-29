@@ -44,6 +44,11 @@ window.addEventListener('unhandledrejection', function (e) {
 </script>
 `;
 
+// 聊天气泡 emoji 的内联 SVG favicon,base64 编码避免 emoji 直接写进 data URI 需要
+// 处理的 URL 转义问题,不用额外起一个静态资源路由
+const FAVICON_LINK =
+  '<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48dGV4dCB5PSIuOWVtIiBmb250LXNpemU9IjkwIj7wn5KsPC90ZXh0Pjwvc3ZnPg==">';
+
 const LANG_SWITCH_SCRIPT = `
 document.getElementById('langSelect').addEventListener('change', (e) => {
   document.cookie = 'lang=' + e.target.value + '; domain=.godot.chat; path=/; max-age=31536000; samesite=lax';
@@ -59,6 +64,11 @@ export function renderLandingPage(locale: Locale): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>godot.chat</title>
+${FAVICON_LINK}
+<meta property="og:type" content="website">
+<meta property="og:title" content="godot.chat">
+<meta property="og:description" content="${m.intro}">
+<meta property="og:url" content="https://godot.chat/">
 <style>
   body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; }
   nav { display: flex; justify-content: flex-end; }
@@ -100,6 +110,12 @@ export function renderChatPage(room: string, locale: Locale): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${room}.godot.chat</title>
+${FAVICON_LINK}
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:type" content="website">
+<meta property="og:title" content="#${room}">
+<meta property="og:description" content="${m.ogDescription.replace('{room}', room)}">
+<meta property="og:url" content="https://${room}.godot.chat/">
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; color: #1a1a1a; }
   header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
