@@ -29,18 +29,20 @@ const locales = ["en", "es", "zh-Hans", "zh-Hant"];
 let failed = 0;
 
 function checkScript(html, label) {
-  const match = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
-  if (!match) {
-    console.log("FAIL", label, "- no <script> block found");
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  if (scripts.length === 0) {
+    console.log("FAIL", label, "- no <script> blocks found");
     failed++;
     return;
   }
-  try {
-    new Function(match[1]);
-    console.log("ok  ", label);
-  } catch (e) {
-    console.log("FAIL", label, "-", e.message);
-    failed++;
+  for (let i = 0; i < scripts.length; i++) {
+    try {
+      new Function(scripts[i]);
+      console.log("ok  ", label, `[script ${i + 1}/${scripts.length}]`);
+    } catch (e) {
+      console.log("FAIL", label, `[script ${i + 1}/${scripts.length}] -`, e.message);
+      failed++;
+    }
   }
 }
 

@@ -22,12 +22,39 @@ const HTML_HEADERS = {
   "referrer-policy": "same-origin",
 };
 
+const CLIENT_ERROR_MAX_BYTES = 4096;
+
+/**
+ * 前端上报的运行时错误,只 console.error 出去进 Workers Logs,不落盘存储。
+ * Content-Length 检查只是提前拒绝明显超大的请求,不是严格的字节上限——
+ * 这是个诊断用的轻量接口,不值得为了防少量滥用把它做复杂。
+ */
+async function handleClientError(request: Request, host: string): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  const contentLength = Number(request.headers.get("Content-Length") ?? "0");
+  if (contentLength > CLIENT_ERROR_MAX_BYTES) {
+    return new Response("Payload too large", { status: 413 });
+  }
+
+  const body = await request.text();
+  console.error("[client-error]", host, body.slice(0, CLIENT_ERROR_MAX_BYTES));
+
+  return new Response(null, { status: 204 });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
 
     const locale = resolveLocale(request);
+
+    if (url.pathname === "/client-error") {
+      return handleClientError(request, host);
+    }
 
     if (host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}`) {
       if (request.method !== "GET") {

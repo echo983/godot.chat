@@ -13,6 +13,37 @@ function jsonForScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+// 独立的一小段脚本,必须放在主脚本之前:这样哪怕主脚本本身有语法错误导致整个
+// <script> 解析失败,这个监听器也已经提前注册好了,还是能把错误报回来——
+// 上次那次 SyntaxError 就是主脚本自己挂了,写在同一个 <script> 里的错误上报
+// 会跟着一起失效,起不到作用。
+const ERROR_REPORTER_SCRIPT = `
+<script>
+window.addEventListener('error', function (e) {
+  try {
+    navigator.sendBeacon('/client-error', JSON.stringify({
+      message: e.message,
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+      stack: e.error && e.error.stack,
+      url: location.href
+    }));
+  } catch (ignored) {}
+});
+window.addEventListener('unhandledrejection', function (e) {
+  try {
+    var reason = e.reason;
+    navigator.sendBeacon('/client-error', JSON.stringify({
+      message: 'unhandledrejection: ' + (reason && reason.message ? reason.message : String(reason)),
+      stack: reason && reason.stack,
+      url: location.href
+    }));
+  } catch (ignored) {}
+});
+</script>
+`;
+
 const LANG_SWITCH_SCRIPT = `
 document.getElementById('langSelect').addEventListener('change', (e) => {
   document.cookie = 'lang=' + e.target.value + '; domain=.godot.chat; path=/; max-age=31536000; samesite=lax';
@@ -46,6 +77,7 @@ export function renderLandingPage(locale: Locale): string {
     <input id="room" placeholder="${m.roomPlaceholder}" maxlength="12" autocomplete="off">
     <button type="submit">${m.enterButton}</button>
   </form>
+  ${ERROR_REPORTER_SCRIPT}
   <script>
     document.getElementById('go').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -216,6 +248,7 @@ export function renderChatPage(room: string, locale: Locale): string {
     </form>
   </div>
 
+  ${ERROR_REPORTER_SCRIPT}
   <script>
     const I18N = ${jsonForScript(messages)};
     const LOCALE = ${jsonForScript(locale)};

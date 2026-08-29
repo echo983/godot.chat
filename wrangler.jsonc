@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
   "routes": [
     { "pattern": "godot.chat/*", "zone_name": "godot.chat" },
     { "pattern": "*.godot.chat/*", "zone_name": "godot.chat" }
