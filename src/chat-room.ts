@@ -54,6 +54,11 @@ interface ConnState {
   windowCount: number;
 }
 
+interface PresenceUser {
+  hashId: string;
+  nickname: string;
+}
+
 function readState(ws: WebSocket): ConnState | null {
   return ws.deserializeAttachment() as ConnState | null;
 }
@@ -96,6 +101,10 @@ async function computeHashId(secret: string): Promise<string> {
  * - 同一身份(hashId)发言硬冷却 MESSAGE_COOLDOWN_MS,按身份存储,换连接躲不掉
  * - 同一 IP 在 IDENTITY_SWITCH_WINDOW_MS 内切换身份超过 IDENTITY_SWITCH_THRESHOLD 次,
  *   封禁这个 IP(仅本房间)JAIL_DURATION_MS
+ *
+ * 在线列表按 hashId 广播(hello/rename/断线时更新)。私聊(whisper)按目标 hashId
+ * 直接路由给对应连接,不落盘、不做离线补发——纯实时中继,跟公开消息共用同一套
+ * 冷却/频率限制。
  */
 export class ChatRoom extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -206,6 +215,43 @@ export class ChatRoom extends DurableObject<Env> {
     return true;
   }
 
+  /** 未过冷却返回 true(可以发言)。只读,不更新——发送成功后要单独调用 touchCooldown。 */
+  private checkCooldown(hashId: string, now: number): boolean {
+    const row = [
+      ...this.ctx.storage.sql.exec<{ lastTs: number }>(
+        "SELECT last_message_ts AS lastTs FROM identities WHERE hash_id = ?",
+        hashId,
+      ),
+    ][0];
+    return !row || now - row.lastTs >= MESSAGE_COOLDOWN_MS;
+  }
+
+  private touchCooldown(hashId: string, now: number): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO identities (hash_id, last_message_ts) VALUES (?, ?)
+       ON CONFLICT(hash_id) DO UPDATE SET last_message_ts = excluded.last_message_ts`,
+      hashId,
+      now,
+    );
+  }
+
+  /** 按 hashId 去重(同一个人开多个标签页只算一次在线) */
+  private getPresenceUsers(): PresenceUser[] {
+    const seen = new Map<string, string>();
+    for (const socket of this.ctx.getWebSockets()) {
+      const s = readState(socket);
+      if (s?.hashId && s.nickname) seen.set(s.hashId, s.nickname);
+    }
+    return [...seen].map(([hashId, nickname]) => ({ hashId, nickname }));
+  }
+
+  private broadcastPresence(): void {
+    const encoded = JSON.stringify({ type: "presence", users: this.getPresenceUsers() });
+    for (const socket of this.ctx.getWebSockets()) {
+      socket.send(encoded);
+    }
+  }
+
   /**
    * beforeSeq 为 null 时取最新一页(初次连接);否则取该序号之前的一页(向上翻页懒加载)。
    * 多取一条来判断是否还有更早的消息,避免额外一次往返。
@@ -269,6 +315,7 @@ export class ChatRoom extends DurableObject<Env> {
 
     const { messages, hasMore } = this.fetchHistoryPage(null);
     server.send(JSON.stringify({ type: "history", messages, hasMore }));
+    server.send(JSON.stringify({ type: "presence", users: this.getPresenceUsers() }));
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -337,6 +384,7 @@ export class ChatRoom extends DurableObject<Env> {
         if (nickname) state.nickname = nickname;
         writeState(ws, state);
         ws.send(JSON.stringify({ type: "identity", hashId: state.hashId, nickname: state.nickname }));
+        this.broadcastPresence();
         return;
       }
 
@@ -354,6 +402,7 @@ export class ChatRoom extends DurableObject<Env> {
         state.nickname = nickname;
         writeState(ws, state);
         ws.send(JSON.stringify({ type: "identity", hashId: state.hashId, nickname: state.nickname }));
+        this.broadcastPresence();
         return;
       }
 
@@ -377,13 +426,7 @@ export class ChatRoom extends DurableObject<Env> {
         const trimmed = cleaned.trim();
         if (!trimmed) return;
 
-        const cooldownRow = [
-          ...this.ctx.storage.sql.exec<{ lastTs: number }>(
-            "SELECT last_message_ts AS lastTs FROM identities WHERE hash_id = ?",
-            state.hashId,
-          ),
-        ][0];
-        if (cooldownRow && now - cooldownRow.lastTs < MESSAGE_COOLDOWN_MS) {
+        if (!this.checkCooldown(state.hashId, now)) {
           ws.send(JSON.stringify({ type: "error", code: "cooldown" }));
           return;
         }
@@ -410,16 +453,69 @@ export class ChatRoom extends DurableObject<Env> {
            )`,
           MAX_STORED_MESSAGES,
         );
-        this.ctx.storage.sql.exec(
-          `INSERT INTO identities (hash_id, last_message_ts) VALUES (?, ?)
-           ON CONFLICT(hash_id) DO UPDATE SET last_message_ts = excluded.last_message_ts`,
-          payload.hashId,
-          payload.ts,
-        );
+        this.touchCooldown(payload.hashId, payload.ts);
 
         const encoded = JSON.stringify({ type: "message", ...payload });
         for (const socket of this.ctx.getWebSockets()) {
           socket.send(encoded);
+        }
+        return;
+      }
+
+      case "whisper": {
+        if (!state.hashId || !state.nickname) {
+          writeState(ws, state);
+          ws.send(JSON.stringify({ type: "error", code: "nickname_required" }));
+          return;
+        }
+
+        const targetHashId = typeof msg.to === "string" ? msg.to : "";
+        const text = typeof msg.text === "string" ? msg.text : "";
+        const cleaned = text.replace(CONTROL_CHARS, "");
+
+        if (cleaned.length > MAX_MESSAGE_LENGTH) {
+          this.flagViolation(ws, state, "message too long");
+          return;
+        }
+
+        writeState(ws, state);
+
+        const trimmed = cleaned.trim();
+        if (!trimmed || !targetHashId) return;
+
+        if (targetHashId === state.hashId) {
+          ws.send(JSON.stringify({ type: "error", code: "whisper_self" }));
+          return;
+        }
+
+        if (!this.checkCooldown(state.hashId, now)) {
+          ws.send(JSON.stringify({ type: "error", code: "cooldown" }));
+          return;
+        }
+
+        const targets = this.ctx.getWebSockets().filter((s) => readState(s)?.hashId === targetHashId);
+        if (targets.length === 0) {
+          ws.send(JSON.stringify({ type: "error", code: "whisper_offline" }));
+          return;
+        }
+
+        this.touchCooldown(state.hashId, now);
+
+        // 私聊不落盘,纯实时中继——离线就是收不到,不做补发
+        const encoded = JSON.stringify({
+          type: "whisper",
+          id: crypto.randomUUID(),
+          text: trimmed,
+          ts: now,
+          fromHashId: state.hashId,
+          fromNickname: state.nickname,
+          toHashId: targetHashId,
+        });
+
+        for (const socket of targets) socket.send(encoded);
+        // 回显给发送者自己的所有连接(多标签页也能看到自己发的私聊)
+        for (const socket of this.ctx.getWebSockets()) {
+          if (readState(socket)?.hashId === state.hashId) socket.send(encoded);
         }
         return;
       }
@@ -457,5 +553,6 @@ export class ChatRoom extends DurableObject<Env> {
     wasClean: boolean,
   ): Promise<void> {
     ws.close(wasClean ? code : 1011, reason);
+    this.broadcastPresence();
   }
 }

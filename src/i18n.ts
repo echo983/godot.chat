@@ -38,12 +38,19 @@ export interface Messages {
     recoveryImportHint: string;
     recoveryInputPlaceholder: string;
     recoveryRestoreButton: string;
+    onlineLabel: string;
+    onlineListTitle: string;
+    whisperWith: string;
+    whisperPlaceholder: string;
+    whisperClose: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
       cooldown: string;
       jailed: string;
       invalid_recovery_code: string;
+      whisper_self: string;
+      whisper_offline: string;
     };
   };
 }
@@ -79,12 +86,19 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryImportHint: "Already have a recovery code? Paste it here to keep your identity:",
       recoveryInputPlaceholder: "Paste recovery code",
       recoveryRestoreButton: "Restore",
+      onlineLabel: "{count} online",
+      onlineListTitle: "Who's here",
+      whisperWith: "Private message to {nickname}",
+      whisperPlaceholder: "Send a private message…",
+      whisperClose: "Close",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
         cooldown: "You're sending messages too fast — wait a few seconds",
         jailed: "Too many identity switches from this connection — blocked for a while",
         invalid_recovery_code: "That doesn't look like a valid recovery code",
+        whisper_self: "You can't whisper yourself",
+        whisper_offline: "That person isn't online anymore",
       },
     },
   },
@@ -118,12 +132,19 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryImportHint: "¿Ya tienes un código de recuperación? Pégalo aquí para conservar tu identidad:",
       recoveryInputPlaceholder: "Pega el código de recuperación",
       recoveryRestoreButton: "Restaurar",
+      onlineLabel: "{count} en línea",
+      onlineListTitle: "Quién está aquí",
+      whisperWith: "Mensaje privado a {nickname}",
+      whisperPlaceholder: "Envía un mensaje privado…",
+      whisperClose: "Cerrar",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
         cooldown: "Estás enviando mensajes demasiado rápido — espera unos segundos",
         jailed: "Demasiados cambios de identidad desde esta conexión — bloqueado por un tiempo",
         invalid_recovery_code: "Ese código de recuperación no parece válido",
+        whisper_self: "No puedes enviarte un mensaje privado a ti mismo",
+        whisper_offline: "Esa persona ya no está en línea",
       },
     },
   },
@@ -155,12 +176,19 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryImportHint: "已经有恢复码?粘贴到这里继续用原来的身份:",
       recoveryInputPlaceholder: "粘贴恢复码",
       recoveryRestoreButton: "恢复",
+      onlineLabel: "在线 {count} 人",
+      onlineListTitle: "在线列表",
+      whisperWith: "私聊 {nickname}",
+      whisperPlaceholder: "发一句悄悄话…",
+      whisperClose: "关闭",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
         cooldown: "发言太快了,歇几秒再说",
         jailed: "短时间内切换身份太多次,已被暂时限制",
         invalid_recovery_code: "恢复码格式不对",
+        whisper_self: "不能私聊自己",
+        whisper_offline: "对方已经不在线了",
       },
     },
   },
@@ -192,12 +220,19 @@ const MESSAGES: Record<Locale, Messages> = {
       recoveryImportHint: "已經有復原碼?貼到這裡繼續用原來的身分:",
       recoveryInputPlaceholder: "貼上復原碼",
       recoveryRestoreButton: "復原",
+      onlineLabel: "在線 {count} 人",
+      onlineListTitle: "在線列表",
+      whisperWith: "私訊 {nickname}",
+      whisperPlaceholder: "傳一句悄悄話…",
+      whisperClose: "關閉",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
         cooldown: "發言太快了,歇幾秒再說",
         jailed: "短時間內切換身分太多次,已被暫時限制",
         invalid_recovery_code: "復原碼格式不對",
+        whisper_self: "不能私訊自己",
+        whisper_offline: "對方已經不在線了",
       },
     },
   },

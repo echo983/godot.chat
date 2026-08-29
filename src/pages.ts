@@ -72,6 +72,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; color: #1a1a1a; }
   header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
   header .room { flex: 1; }
+  #onlineBtn { font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
   #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
   #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; }
   select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; }
@@ -111,11 +112,33 @@ export function renderChatPage(room: string, locale: Locale): string {
   .recovery-row { display: flex; gap: 0.4rem; margin-bottom: 0.8rem; }
   .recovery-row input { flex: 1; width: auto; font-size: 0.8rem; padding: 0.4em 0.6em; margin-bottom: 0; }
   .recovery-row button { width: auto; padding: 0.4em 0.8em; font-size: 0.8rem; }
+  #onlineList { display: flex; flex-direction: column; gap: 0.3rem; max-height: 50vh; overflow-y: auto; }
+  .online-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem; border-radius: 6px; cursor: pointer; }
+  .online-row:hover { background: #f2f2f2; }
+  .online-row.me { cursor: default; opacity: 0.6; }
+  .online-row.me:hover { background: none; }
+  .online-row img { width: 24px; height: 24px; border-radius: 50%; background: #eee; }
+  .online-row span { font-size: 0.85rem; }
+  .whisper-panel {
+    display: none; position: fixed; right: 1rem; bottom: 5rem; width: 18rem; max-width: 90vw;
+    background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    flex-direction: column; z-index: 20; overflow: hidden;
+  }
+  .whisper-panel.open { display: flex; }
+  .whisper-header { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.85rem; font-weight: 600; }
+  .whisper-header button { background: none; border: none; color: #999; cursor: pointer; font-size: 1.1rem; padding: 0; width: auto; line-height: 1; }
+  #whisperLog { max-height: 12rem; overflow-y: auto; padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; }
+  .whisper-msg { padding: 0.4em 0.7em; background: #f2f2f2; border-radius: 8px; align-self: flex-start; max-width: 85%; word-break: break-word; white-space: pre-wrap; }
+  .whisper-msg.mine { align-self: flex-end; background: #dbeafe; }
+  #whisperForm { display: flex; gap: 0.4rem; padding: 0.6rem 0.8rem; border-top: 1px solid #eee; }
+  #whisperForm input { flex: 1; width: auto; font-size: 0.85rem; padding: 0.4em 0.6em; margin-bottom: 0; }
+  #whisperForm button { width: auto; font-size: 0.85rem; padding: 0.4em 0.9em; align-self: auto; }
 </style>
 </head>
 <body>
   <header>
     <span class="room">#${room}</span>
+    <span id="onlineBtn"></span>
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
   </header>
@@ -151,6 +174,23 @@ export function renderChatPage(room: string, locale: Locale): string {
     </details>
   </dialog>
 
+  <dialog id="onlineDialog">
+    <h2>${m.onlineListTitle}</h2>
+    <div id="onlineList"></div>
+  </dialog>
+
+  <div id="whisperPanel" class="whisper-panel">
+    <div class="whisper-header">
+      <span id="whisperTitle"></span>
+      <button type="button" id="whisperClose" aria-label="${m.whisperClose}">×</button>
+    </div>
+    <div id="whisperLog"></div>
+    <form id="whisperForm">
+      <input id="whisperInput" maxlength="2000" autocomplete="off" placeholder="${m.whisperPlaceholder}">
+      <button type="submit">${m.sendButton}</button>
+    </form>
+  </div>
+
   <script>
     const I18N = ${jsonForScript(messages)};
     const LOCALE = ${jsonForScript(locale)};
@@ -168,6 +208,15 @@ export function renderChatPage(room: string, locale: Locale): string {
     const copyRecoveryBtn = document.getElementById('copyRecoveryBtn');
     const recoveryInput = document.getElementById('recoveryInput');
     const restoreRecoveryBtn = document.getElementById('restoreRecoveryBtn');
+    const onlineBtn = document.getElementById('onlineBtn');
+    const onlineDialog = document.getElementById('onlineDialog');
+    const onlineList = document.getElementById('onlineList');
+    const whisperPanel = document.getElementById('whisperPanel');
+    const whisperTitle = document.getElementById('whisperTitle');
+    const whisperClose = document.getElementById('whisperClose');
+    const whisperLog = document.getElementById('whisperLog');
+    const whisperForm = document.getElementById('whisperForm');
+    const whisperInput = document.getElementById('whisperInput');
 
     const SECRET_KEY = 'godot-chat-secret';
     const NICK_KEY = 'godot-chat-nickname';
@@ -242,6 +291,74 @@ export function renderChatPage(room: string, locale: Locale): string {
     }
 
     meEl.addEventListener('click', openNickDialog);
+
+    let presenceUsers = [];
+    let whisperTarget = null;
+
+    function renderOnlineButton() {
+      onlineBtn.textContent = I18N.chat.onlineLabel.replace('{count}', String(presenceUsers.length));
+    }
+
+    function renderOnlineList() {
+      onlineList.innerHTML = '';
+      for (const u of presenceUsers) {
+        const row = document.createElement('div');
+        row.className = 'online-row' + (u.hashId === myHashId ? ' me' : '');
+
+        const img = document.createElement('img');
+        img.src = avatarUrl(u.hashId);
+        img.alt = '';
+
+        const label = document.createElement('span');
+        label.textContent = u.nickname + ' (' + u.hashId.slice(-4) + ')';
+
+        row.appendChild(img);
+        row.appendChild(label);
+
+        if (u.hashId !== myHashId) {
+          row.addEventListener('click', () => {
+            onlineDialog.close();
+            openWhisper(u.hashId, u.nickname);
+          });
+        }
+
+        onlineList.appendChild(row);
+      }
+    }
+
+    onlineBtn.addEventListener('click', () => {
+      renderOnlineList();
+      if (typeof onlineDialog.showModal === 'function') onlineDialog.showModal();
+    });
+
+    function openWhisper(hashId, targetNickname) {
+      whisperTarget = { hashId, nickname: targetNickname };
+      whisperTitle.textContent = I18N.chat.whisperWith.replace('{nickname}', targetNickname);
+      whisperLog.innerHTML = '';
+      whisperPanel.classList.add('open');
+      whisperInput.focus();
+    }
+
+    whisperClose.addEventListener('click', () => {
+      whisperPanel.classList.remove('open');
+      whisperTarget = null;
+    });
+
+    function appendWhisperMessage(text, mine) {
+      const el = document.createElement('div');
+      el.className = 'whisper-msg' + (mine ? ' mine' : '');
+      el.textContent = text;
+      whisperLog.appendChild(el);
+      whisperLog.scrollTop = whisperLog.scrollHeight;
+    }
+
+    whisperForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = whisperInput.value.trim();
+      if (!text || !whisperTarget) return;
+      sendJSON({ type: 'whisper', to: whisperTarget.hashId, text });
+      whisperInput.value = '';
+    });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host + '/ws');
@@ -373,6 +490,28 @@ export function renderChatPage(room: string, locale: Locale): string {
 
       if (data.type === 'error') {
         showStatus(I18N.chat.errors[data.code] || data.code);
+        return;
+      }
+
+      if (data.type === 'presence') {
+        presenceUsers = data.users;
+        renderOnlineButton();
+        if (onlineDialog.open) renderOnlineList();
+        return;
+      }
+
+      if (data.type === 'whisper') {
+        const mine = data.fromHashId === myHashId;
+        const otherHashId = mine ? data.toHashId : data.fromHashId;
+        if (!whisperTarget || whisperTarget.hashId !== otherHashId) {
+          let otherNickname = mine ? '' : data.fromNickname;
+          if (!otherNickname) {
+            const match = presenceUsers.find((u) => u.hashId === otherHashId);
+            otherNickname = match ? match.nickname : otherHashId.slice(-4);
+          }
+          openWhisper(otherHashId, otherNickname);
+        }
+        appendWhisperMessage(data.text, mine);
         return;
       }
 
