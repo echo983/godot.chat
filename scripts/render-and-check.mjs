@@ -1,0 +1,55 @@
+#!/usr/bin/env node
+// 校验 pages.ts 里嵌入的 <script> 内容,用真实渲染出来的页面(带真实的多语言文案),
+// 而不是拿占位符替换 ${...} 之后再查语法——占位符替换测不出模板字符串自己的转义
+// 处理把嵌入 JS 里的正则表达式转义符吃掉这种问题(2026-08-29 就因为这个上过一次线上
+// SyntaxError:`\/`、`\s`、`\.`、`\]` 在外层模板字符串解析时被当成未识别转义,
+// 反斜杠被丢弃,渲染出来的正则字面量就坏了)。
+//
+// 用法: node scripts/render-and-check.mjs
+
+import * as esbuild from "esbuild";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const entry = path.join(__dirname, "..", "src", "pages.ts");
+
+const result = await esbuild.build({
+  entryPoints: [entry],
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  write: false,
+});
+
+const code = result.outputFiles[0].text;
+const mod = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+
+const locales = ["en", "es", "zh-Hans", "zh-Hant"];
+let failed = 0;
+
+function checkScript(html, label) {
+  const match = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  if (!match) {
+    console.log("FAIL", label, "- no <script> block found");
+    failed++;
+    return;
+  }
+  try {
+    new Function(match[1]);
+    console.log("ok  ", label);
+  } catch (e) {
+    console.log("FAIL", label, "-", e.message);
+    failed++;
+  }
+}
+
+for (const locale of locales) {
+  checkScript(mod.renderChatPage("newyork", locale), `chat page (${locale})`);
+}
+for (const locale of locales) {
+  checkScript(mod.renderLandingPage(locale), `landing page (${locale})`);
+}
+
+console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
+process.exit(failed === 0 ? 0 : 1);
