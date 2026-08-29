@@ -1,0 +1,7 @@
+secret/
+.env
+.env.*
+node_modules/
+.wrangler/
+dist/
+.DS_Store
