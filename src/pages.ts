@@ -75,7 +75,8 @@ export function renderChatPage(room: string, locale: Locale): string {
   #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
   #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; }
   select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; }
-  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+  .chat-body { position: relative; flex: 1; min-height: 0; }
+  #log { position: absolute; inset: 0; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
   .day-sep { align-self: center; font-size: 0.75rem; color: #888; background: #f2f2f2; padding: 0.2em 0.9em; border-radius: 999px; margin: 0.3rem 0; }
   .row { display: flex; gap: 0.5rem; align-items: flex-end; }
   .row.mine { flex-direction: row-reverse; }
@@ -91,9 +92,9 @@ export function renderChatPage(room: string, locale: Locale): string {
   button { padding: 0.6em 1.2em; font-size: 1rem; border: none; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; align-self: flex-end; }
   button:disabled { background: #ccc; cursor: not-allowed; }
   #status {
-    position: fixed; left: 50%; bottom: 4.5rem; transform: translateX(-50%);
+    position: absolute; left: 50%; bottom: 0.75rem; transform: translateX(-50%);
     background: rgba(20,20,20,0.85); color: #fff; padding: 0.4em 1em; border-radius: 999px;
-    font-size: 0.8rem; max-width: 85vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 0.8rem; max-width: 85%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     opacity: 0; pointer-events: none; transition: opacity 0.25s ease; z-index: 10;
   }
   #status.show { opacity: 1; }
@@ -112,8 +113,10 @@ export function renderChatPage(room: string, locale: Locale): string {
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
   </header>
-  <div id="status"></div>
-  <div id="log"></div>
+  <div class="chat-body">
+    <div id="log"></div>
+    <div id="status"></div>
+  </div>
   <form id="send">
     <textarea id="text" rows="1" maxlength="2000" autocomplete="off" autofocus placeholder="${m.textPlaceholder}"></textarea>
     <button id="sendBtn" type="submit" disabled>${m.sendButton}</button>
