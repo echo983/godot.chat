@@ -513,6 +513,7 @@ export function renderChatPage(room: string, locale: Locale): string {
     function makeMessageRow(m) {
       const row = document.createElement('div');
       row.className = 'row' + (m.hashId === myHashId ? ' mine' : '');
+      row.dataset.hashId = m.hashId;
 
       const img = document.createElement('img');
       img.src = avatarUrl(m.hashId);
@@ -603,6 +604,11 @@ export function renderChatPage(room: string, locale: Locale): string {
         }
         renderMe();
         sendBtn.disabled = !nickname;
+        // 身份确认之前收到的历史消息(含自己发过的)当时都判成了"别人的",
+        // 这里回头按刚确认的 hashId 重新标一遍
+        for (const row of log.querySelectorAll('.row')) {
+          row.classList.toggle('mine', row.dataset.hashId === myHashId);
+        }
         return;
       }
 
