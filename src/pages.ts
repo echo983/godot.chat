@@ -81,7 +81,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   .day-sep { align-self: center; font-size: 0.75rem; color: #888; background: #f2f2f2; padding: 0.2em 0.9em; border-radius: 999px; margin: 0.3rem 0; }
   .row { display: flex; gap: 0.5rem; align-items: flex-end; }
   .row.mine { flex-direction: row-reverse; }
-  .row img { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: #eee; }
+  .row > img { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: #eee; }
   .bubble { max-width: 70%; }
   .who { font-size: 0.75rem; color: #999; margin-bottom: 0.15rem; }
   .row.mine .who { text-align: right; }
@@ -109,6 +109,9 @@ export function renderChatPage(room: string, locale: Locale): string {
   dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
   dialog button { width: 100%; }
+  #lightbox { padding: 0; border: none; background: transparent; max-width: 90vw; width: auto; }
+  #lightbox::backdrop { background: rgba(0,0,0,0.85); }
+  #lightbox img { display: block; max-width: 90vw; max-height: 90vh; border-radius: 6px; cursor: zoom-out; }
   #recoverySection { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; font-size: 0.8rem; }
   #recoverySection summary { cursor: pointer; color: #555; }
   #recoverySection .hint { color: #666; margin: 0.6rem 0; font-size: 0.78rem; line-height: 1.4; }
@@ -189,6 +192,10 @@ export function renderChatPage(room: string, locale: Locale): string {
     <div id="onlineList"></div>
   </dialog>
 
+  <dialog id="lightbox">
+    <img id="lightboxImg" alt="">
+  </dialog>
+
   <div id="whisperPanel" class="whisper-panel">
     <div class="whisper-header">
       <span id="whisperTitle"></span>
@@ -223,6 +230,8 @@ export function renderChatPage(room: string, locale: Locale): string {
     const onlineDialog = document.getElementById('onlineDialog');
     const onlineDialogClose = document.getElementById('onlineDialogClose');
     const onlineList = document.getElementById('onlineList');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
     const whisperPanel = document.getElementById('whisperPanel');
     const whisperTitle = document.getElementById('whisperTitle');
     const whisperClose = document.getElementById('whisperClose');
@@ -319,7 +328,9 @@ export function renderChatPage(room: string, locale: Locale): string {
           img.className = 'msg-media';
           img.loading = 'lazy';
           img.referrerPolicy = 'no-referrer';
+          img.style.cursor = 'zoom-in';
           img.onerror = () => img.replaceWith(document.createTextNode(url));
+          img.addEventListener('click', () => openLightbox(url));
           container.appendChild(img);
         } else if (kind === 'video') {
           const video = document.createElement('video');
@@ -378,9 +389,16 @@ export function renderChatPage(room: string, locale: Locale): string {
     }
     closeOnBackdropClick(nickDialog);
     closeOnBackdropClick(onlineDialog);
+    closeOnBackdropClick(lightbox);
 
     nickDialogClose.addEventListener('click', () => nickDialog.close());
     onlineDialogClose.addEventListener('click', () => onlineDialog.close());
+
+    function openLightbox(src) {
+      lightboxImg.src = src;
+      if (typeof lightbox.showModal === 'function') lightbox.showModal();
+    }
+    lightboxImg.addEventListener('click', () => lightbox.close());
 
     let presenceUsers = [];
     let whisperTarget = null;
