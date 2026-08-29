@@ -46,11 +46,17 @@ function checkScript(html, label) {
   }
 }
 
+const rootDomains = ["godot.chat", "staging.godot.chat"];
+
 for (const locale of locales) {
-  checkScript(mod.renderChatPage("newyork", locale), `chat page (${locale})`);
+  for (const rootDomain of rootDomains) {
+    checkScript(mod.renderChatPage("newyork", locale, rootDomain), `chat page (${locale}, ${rootDomain})`);
+  }
 }
 for (const locale of locales) {
-  checkScript(mod.renderLandingPage(locale), `landing page (${locale})`);
+  for (const rootDomain of rootDomains) {
+    checkScript(mod.renderLandingPage(locale, rootDomain), `landing page (${locale}, ${rootDomain})`);
+  }
 }
 
 console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);

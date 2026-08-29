@@ -9,9 +9,8 @@ export { ChatRoom, RoomRegistry };
 export interface Env {
   CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
   ROOM_REGISTRY: DurableObjectNamespace<RoomRegistry>;
+  ROOT_DOMAIN: string;
 }
-
-const ROOT_DOMAIN = "godot.chat";
 
 const HTML_HEADERS = {
   "content-type": "text/html; charset=utf-8",
@@ -66,9 +65,12 @@ async function handleClientError(request: Request, host: string, ip: string): Pr
   return new Response(null, { status: 204 });
 }
 
-function handleRobotsTxt(host: string): Response {
-  const isRoomHost = host !== ROOT_DOMAIN && host !== `www.${ROOT_DOMAIN}`;
-  const body = isRoomHost ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\n";
+function handleRobotsTxt(host: string, rootDomain: string): Response {
+  // 非生产环境(staging 等)一律禁止收录,不区分 apex 还是房间子域名
+  const isProduction = rootDomain === "godot.chat";
+  const isRoomHost = host !== rootDomain && host !== `www.${rootDomain}`;
+  const disallow = !isProduction || isRoomHost;
+  const body = disallow ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\n";
   return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
@@ -76,30 +78,31 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
+    const rootDomain = env.ROOT_DOMAIN;
 
     const locale = resolveLocale(request);
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
 
     if (url.pathname === "/robots.txt") {
-      return handleRobotsTxt(host);
+      return handleRobotsTxt(host, rootDomain);
     }
 
     if (url.pathname === "/client-error") {
       return handleClientError(request, host, ip);
     }
 
-    if (host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}`) {
+    if (host === rootDomain || host === `www.${rootDomain}`) {
       if (request.method !== "GET") {
         return new Response("Method not allowed", { status: 405 });
       }
-      return new Response(renderLandingPage(locale), { headers: HTML_HEADERS });
+      return new Response(renderLandingPage(locale, rootDomain), { headers: HTML_HEADERS });
     }
 
-    if (!host.endsWith(`.${ROOT_DOMAIN}`)) {
+    if (!host.endsWith(`.${rootDomain}`)) {
       return new Response("Not found", { status: 404 });
     }
 
-    const label = host.slice(0, -(ROOT_DOMAIN.length + 1));
+    const label = host.slice(0, -(rootDomain.length + 1));
     const validation = normalizeRoomName(label);
 
     if (!validation.ok) {
@@ -137,6 +140,6 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    return new Response(renderChatPage(room, locale), { headers: HTML_HEADERS });
+    return new Response(renderChatPage(room, locale, rootDomain), { headers: HTML_HEADERS });
   },
 } satisfies ExportedHandler<Env>;

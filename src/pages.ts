@@ -49,26 +49,32 @@ window.addEventListener('unhandledrejection', function (e) {
 const FAVICON_LINK =
   '<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48dGV4dCB5PSIuOWVtIiBmb250LXNpemU9IjkwIj7wn5KsPC90ZXh0Pjwvc3ZnPg==">';
 
-const LANG_SWITCH_SCRIPT = `
+// staging 环境用 rootDomain 区分(比如 staging.godot.chat),cookie 的作用域必须
+// 跟着环境走——不然 staging 写的语言 cookie 会因为 domain=.godot.chat 覆盖到生产,
+// 反过来也一样
+function langSwitchScript(rootDomain: string): string {
+  return `
 document.getElementById('langSelect').addEventListener('change', (e) => {
-  document.cookie = 'lang=' + e.target.value + '; domain=.godot.chat; path=/; max-age=31536000; samesite=lax';
+  document.cookie = 'lang=' + e.target.value + '; domain=.${rootDomain}; path=/; max-age=31536000; samesite=lax';
   location.reload();
 });
 `;
+}
 
-export function renderLandingPage(locale: Locale): string {
+export function renderLandingPage(locale: Locale, rootDomain: string): string {
   const m = t(locale).landing;
+  const indexable = rootDomain === "godot.chat";
   return `<!doctype html>
 <html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>godot.chat</title>
+<title>${rootDomain}</title>
 ${FAVICON_LINK}
-<meta property="og:type" content="website">
-<meta property="og:title" content="godot.chat">
+${indexable ? "" : '<meta name="robots" content="noindex, nofollow">\n'}<meta property="og:type" content="website">
+<meta property="og:title" content="${rootDomain}">
 <meta property="og:description" content="${m.intro}">
-<meta property="og:url" content="https://godot.chat/">
+<meta property="og:url" content="https://${rootDomain}/">
 <style>
   body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; }
   nav { display: flex; justify-content: flex-end; }
@@ -81,7 +87,7 @@ ${FAVICON_LINK}
 </head>
 <body>
   <nav>${renderLangSwitcher(locale)}</nav>
-  <h1>godot.chat</h1>
+  <h1>${rootDomain}</h1>
   <p>${m.intro}</p>
   <form id="go">
     <input id="room" placeholder="${m.roomPlaceholder}" maxlength="12" autocomplete="off">
@@ -93,15 +99,15 @@ ${FAVICON_LINK}
       e.preventDefault();
       const room = document.getElementById('room').value.trim().toLowerCase();
       if (!room) return;
-      window.location.href = 'https://' + room + '.godot.chat/';
+      window.location.href = 'https://' + room + '.${rootDomain}/';
     });
-    ${LANG_SWITCH_SCRIPT}
+    ${langSwitchScript(rootDomain)}
   </script>
 </body>
 </html>`;
 }
 
-export function renderChatPage(room: string, locale: Locale): string {
+export function renderChatPage(room: string, locale: Locale, rootDomain: string): string {
   const messages = t(locale);
   const m = messages.chat;
   return `<!doctype html>
@@ -109,13 +115,13 @@ export function renderChatPage(room: string, locale: Locale): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${room}.godot.chat</title>
+<title>${room}.${rootDomain}</title>
 ${FAVICON_LINK}
 <meta name="robots" content="noindex, nofollow">
 <meta property="og:type" content="website">
 <meta property="og:title" content="#${room}">
 <meta property="og:description" content="${m.ogDescription.replace('{room}', room)}">
-<meta property="og:url" content="https://${room}.godot.chat/">
+<meta property="og:url" content="https://${room}.${rootDomain}/">
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; color: #1a1a1a; }
   header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
@@ -781,7 +787,7 @@ ${FAVICON_LINK}
       resizeTextInput();
     });
 
-    ${LANG_SWITCH_SCRIPT}
+    ${langSwitchScript(rootDomain)}
   </script>
 </body>
 </html>`;
