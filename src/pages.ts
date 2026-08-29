@@ -109,9 +109,15 @@ export function renderChatPage(room: string, locale: Locale): string {
   dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
   dialog button { width: 100%; }
-  #lightbox { padding: 0; border: none; background: transparent; max-width: 90vw; width: auto; }
+  #lightbox { padding: 0; border: none; background: transparent; max-width: 90vw; max-height: 90vh; }
+  #lightbox[open] { display: flex; align-items: center; justify-content: center; }
   #lightbox::backdrop { background: rgba(0,0,0,0.85); }
   #lightbox img { display: block; max-width: 90vw; max-height: 90vh; border-radius: 6px; cursor: zoom-out; }
+  .lightbox-close {
+    position: fixed; top: 1rem; right: 1rem; z-index: 30; width: 2.2rem; height: 2.2rem;
+    background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%;
+    font-size: 1.3rem; line-height: 1; cursor: pointer;
+  }
   #recoverySection { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; font-size: 0.8rem; }
   #recoverySection summary { cursor: pointer; color: #555; }
   #recoverySection .hint { color: #666; margin: 0.6rem 0; font-size: 0.78rem; line-height: 1.4; }
@@ -193,6 +199,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   </dialog>
 
   <dialog id="lightbox">
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="${m.closeLabel}">×</button>
     <img id="lightboxImg" alt="">
   </dialog>
 
@@ -232,6 +239,7 @@ export function renderChatPage(room: string, locale: Locale): string {
     const onlineList = document.getElementById('onlineList');
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = document.getElementById('lightboxImg');
+    const lightboxClose = document.getElementById('lightboxClose');
     const whisperPanel = document.getElementById('whisperPanel');
     const whisperTitle = document.getElementById('whisperTitle');
     const whisperClose = document.getElementById('whisperClose');
@@ -399,6 +407,7 @@ export function renderChatPage(room: string, locale: Locale): string {
       if (typeof lightbox.showModal === 'function') lightbox.showModal();
     }
     lightboxImg.addEventListener('click', () => lightbox.close());
+    lightboxClose.addEventListener('click', () => lightbox.close());
 
     let presenceUsers = [];
     let whisperTarget = null;
