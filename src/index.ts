@@ -10,15 +10,25 @@ export interface Env {
 
 const ROOT_DOMAIN = "godot.chat";
 
+const HTML_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "x-content-type-options": "nosniff",
+  "content-security-policy":
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+    "connect-src 'self' wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+  "referrer-policy": "same-origin",
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
 
     if (host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}`) {
-      return new Response(renderLandingPage(), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      if (request.method !== "GET") {
+        return new Response("Method not allowed", { status: 405 });
+      }
+      return new Response(renderLandingPage(), { headers: HTML_HEADERS });
     }
 
     if (!host.endsWith(`.${ROOT_DOMAIN}`)) {
@@ -35,13 +45,26 @@ export default {
     const room = validation.room;
 
     if (url.pathname === "/ws") {
+      if (request.headers.get("Upgrade") !== "websocket") {
+        return new Response("Expected websocket", { status: 426 });
+      }
+
+      // 只做同源校验的软防护:非浏览器客户端可以伪造 Origin,
+      // 但能挡掉最常见的"从别的网页发起跨站连接"滥用
+      const origin = request.headers.get("Origin");
+      if (origin !== null && origin !== `https://${host}`) {
+        return new Response("Forbidden", { status: 403 });
+      }
+
       const id = env.CHAT_ROOM.idFromName(room);
       const stub = env.CHAT_ROOM.get(id);
       return stub.fetch(request);
     }
 
-    return new Response(renderChatPage(room), {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
+    if (request.method !== "GET") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    return new Response(renderChatPage(room), { headers: HTML_HEADERS });
   },
 } satisfies ExportedHandler<Env>;
