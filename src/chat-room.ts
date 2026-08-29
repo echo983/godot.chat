@@ -12,9 +12,9 @@ const RATE_LIMIT_MAX_MESSAGES = 20;
 const MAX_VIOLATIONS = 5;
 
 // 每个房间只保留最近这么多条——先兜住存储量,不是最终的结晶/结石分类机制
-const MAX_STORED_MESSAGES = 200;
-// 新连接进来时回放的历史条数
-const HISTORY_LIMIT = 50;
+const MAX_STORED_MESSAGES = 1000;
+// 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
+const PAGE_SIZE = 50;
 
 // C0 控制字符,保留 \t \n \r,其余(含 DEL)一律剔除
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]", "g");
@@ -25,6 +25,16 @@ interface StoredMessage {
   ts: number;
   nickname: string;
   hashId: string;
+}
+
+interface HistoryRow {
+  seq: number;
+  id: string;
+  text: string;
+  ts: number;
+  nickname: string;
+  hashId: string;
+  [key: string]: SqlStorageValue;
 }
 
 interface ConnState {
@@ -106,6 +116,32 @@ export class ChatRoom extends DurableObject<Env> {
     }
   }
 
+  /**
+   * beforeSeq 为 null 时取最新一页(初次连接);否则取该序号之前的一页(向上翻页懒加载)。
+   * 多取一条来判断是否还有更早的消息,避免额外一次往返。
+   */
+  private fetchHistoryPage(beforeSeq: number | null): { messages: HistoryRow[]; hasMore: boolean } {
+    const rows =
+      beforeSeq === null
+        ? [
+            ...this.ctx.storage.sql.exec<HistoryRow>(
+              "SELECT seq, id, text, ts, nickname, hash_id AS hashId FROM messages ORDER BY seq DESC LIMIT ?",
+              PAGE_SIZE + 1,
+            ),
+          ]
+        : [
+            ...this.ctx.storage.sql.exec<HistoryRow>(
+              "SELECT seq, id, text, ts, nickname, hash_id AS hashId FROM messages WHERE seq < ? ORDER BY seq DESC LIMIT ?",
+              beforeSeq,
+              PAGE_SIZE + 1,
+            ),
+          ];
+
+    const hasMore = rows.length > PAGE_SIZE;
+    const messages = rows.slice(0, PAGE_SIZE).reverse();
+    return { messages, hasMore };
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected websocket", { status: 426 });
@@ -135,20 +171,8 @@ export class ChatRoom extends DurableObject<Env> {
       windowCount: 0,
     });
 
-    const rows = [
-      ...this.ctx.storage.sql.exec<{
-        id: string;
-        text: string;
-        ts: number;
-        nickname: string;
-        hashId: string;
-      }>(
-        "SELECT id, text, ts, nickname, hash_id AS hashId FROM messages ORDER BY seq DESC LIMIT ?",
-        HISTORY_LIMIT,
-      ),
-    ].reverse();
-
-    server.send(JSON.stringify({ type: "history", messages: rows }));
+    const { messages, hasMore } = this.fetchHistoryPage(null);
+    server.send(JSON.stringify({ type: "history", messages, hasMore }));
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -272,6 +296,18 @@ export class ChatRoom extends DurableObject<Env> {
         for (const socket of this.ctx.getWebSockets()) {
           socket.send(encoded);
         }
+        return;
+      }
+
+      case "history_before": {
+        const before = msg.before;
+        if (typeof before !== "number" || !Number.isInteger(before) || before < 0) {
+          this.flagViolation(ws, state, "invalid history cursor");
+          return;
+        }
+        writeState(ws, state);
+        const { messages, hasMore } = this.fetchHistoryPage(before);
+        ws.send(JSON.stringify({ type: "history_before", messages, hasMore }));
         return;
       }
 
