@@ -15,7 +15,7 @@ const HTML_HEADERS = {
   "x-content-type-options": "nosniff",
   "content-security-policy":
     "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-    "connect-src 'self' wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "connect-src 'self' wss:; img-src 'self' https://api.dicebear.com; base-uri 'none'; frame-ancestors 'none'",
   "referrer-policy": "same-origin",
 };
 
