@@ -2,6 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 
 const MAX_MESSAGE_LENGTH = 2000;
+// Cloudflare Workers 平台本身允许单条 WebSocket 消息最大到 32 MiB——远超任何
+// 合法消息(最大的合法消息是 chat/whisper,JSON 编码后也就几千字节)。在
+// JSON.parse/正则处理之前就按原始字节数拒绝,不然攻击者能让我们白白吃下
+// 几十 MB 的字符串处理成本才轮到后面的长度校验
+const MAX_RAW_MESSAGE_BYTES = 8192;
 const MAX_NICKNAME_LENGTH = 20;
 const MAX_SECRET_LENGTH = 128;
 const HASH_ID_LENGTH = 16; // hex chars kept server-side; UI only shows the last 4
@@ -92,8 +97,11 @@ async function computeHashId(secret: string): Promise<string> {
  * "结晶/结石/矿渣/化石"的分类与生命周期是后续阶段,这里先做一个简单的滚动上限。
  *
  * 防滥用边界:
- * - 只接受文本帧,二进制帧直接断开连接
- * - 单条消息/昵称长度上限,超限计入违规
+ * - 只接受文本帧,二进制帧直接断开连接;单条原始消息超过 MAX_RAW_MESSAGE_BYTES 也
+ *   直接断开(在 JSON.parse 之前拒绝)——Workers 平台本身允许单条 WebSocket 消息
+ *   最大 32 MiB,不能等它解析/处理完才发现该拒绝
+ * - chat/whisper 的文本超过 MAX_MESSAGE_LENGTH 零容忍直接断开,不计入违规重试
+ * - 昵称长度上限,超限计入违规
  * - 滑动窗口频率限制(单连接,覆盖 hello/rename/chat 全部消息类型),超限计入违规
  * - 违规次数达到上限则断开连接
  * - 单房间并发连接数上限,单 IP 并发连接数上限
@@ -327,6 +335,12 @@ export class ChatRoom extends DurableObject<Env> {
       return;
     }
 
+    if (raw.length > MAX_RAW_MESSAGE_BYTES) {
+      // 在 JSON.parse 之前就拒绝,不给超大消息任何被解析/处理的机会
+      ws.close(1009, "message too large");
+      return;
+    }
+
     const state = readState(ws);
     if (!state) {
       ws.close(1011, "missing connection state");
@@ -414,13 +428,15 @@ export class ChatRoom extends DurableObject<Env> {
         }
 
         const text = typeof msg.text === "string" ? msg.text : "";
-        const cleaned = text.replace(CONTROL_CHARS, "");
 
-        if (cleaned.length > MAX_MESSAGE_LENGTH) {
-          this.flagViolation(ws, state, "message too long");
+        // 先查原始长度再清洗——没必要先在超长字符串上跑一遍正则才发现要拒绝。
+        // 超长消息没有正常客户端会触发,零容忍直接断开,不走 5 次违规才断的宽容策略
+        if (text.length > MAX_MESSAGE_LENGTH) {
+          ws.close(1009, "message too long");
           return;
         }
 
+        const cleaned = text.replace(CONTROL_CHARS, "");
         writeState(ws, state);
 
         const trimmed = cleaned.trim();
@@ -471,13 +487,14 @@ export class ChatRoom extends DurableObject<Env> {
 
         const targetHashId = typeof msg.to === "string" ? msg.to : "";
         const text = typeof msg.text === "string" ? msg.text : "";
-        const cleaned = text.replace(CONTROL_CHARS, "");
 
-        if (cleaned.length > MAX_MESSAGE_LENGTH) {
-          this.flagViolation(ws, state, "message too long");
+        // 先查原始长度再清洗,理由同 chat 分支
+        if (text.length > MAX_MESSAGE_LENGTH) {
+          ws.close(1009, "message too long");
           return;
         }
 
+        const cleaned = text.replace(CONTROL_CHARS, "");
         writeState(ws, state);
 
         const trimmed = cleaned.trim();

@@ -1,6 +1,7 @@
 import { normalizeRoomName } from "./room-name";
 import { renderChatPage, renderLandingPage } from "./pages";
 import { resolveLocale } from "./i18n";
+import { readBodyCapped } from "./body-utils";
 import { ChatRoom } from "./chat-room";
 import { RoomRegistry } from "./room-registry";
 
@@ -36,18 +37,13 @@ const clientErrorCounts = new Map<string, { count: number; windowStart: number }
 
 /**
  * 前端上报的运行时错误,只 console.error 出去进 Workers Logs,不落盘存储。
- * Content-Length 检查只是提前拒绝明显超大的请求,不是严格的字节上限——
  * 这是个诊断用的轻量接口,不值得为了防少量滥用把它做复杂,但完全不设限的话
- * 任何网站都能跨站悄悄往这灌垃圾把真正的错误淹没掉,所以还是加个粗略限流。
+ * 任何网站都能跨站悄悄往这灌垃圾把真正的错误淹没掉,所以还是加个粗略限流,
+ * 大小限制则靠 readBodyCapped 边读边拦,不信任客户端自报的 Content-Length。
  */
 async function handleClientError(request: Request, host: string, ip: string): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
-  }
-
-  const contentLength = Number(request.headers.get("Content-Length") ?? "0");
-  if (contentLength > CLIENT_ERROR_MAX_BYTES) {
-    return new Response("Payload too large", { status: 413 });
   }
 
   const now = Date.now();
@@ -63,8 +59,12 @@ async function handleClientError(request: Request, host: string, ip: string): Pr
     }
   }
 
-  const body = await request.text();
-  console.error("[client-error]", host, body.slice(0, CLIENT_ERROR_MAX_BYTES));
+  const body = await readBodyCapped(request, CLIENT_ERROR_MAX_BYTES);
+  if (body === null) {
+    return new Response("Payload too large", { status: 413 });
+  }
+
+  console.error("[client-error]", host, body);
 
   return new Response(null, { status: 204 });
 }
