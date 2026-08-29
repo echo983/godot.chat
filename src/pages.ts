@@ -68,12 +68,20 @@ export function renderChatPage(room: string): string {
     ws.onclose = () => { status.textContent = '连接已断开'; };
     ws.onerror = () => { status.textContent = '连接出错'; };
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    function appendMessage(text) {
       const el = document.createElement('div');
       el.className = 'msg';
-      el.textContent = data.text;
+      el.textContent = text;
       log.appendChild(el);
+    }
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'history') {
+        for (const m of data.messages) appendMessage(m.text);
+      } else if (data.type === 'message') {
+        appendMessage(data.text);
+      }
       log.scrollTop = log.scrollHeight;
     };
 
