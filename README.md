@@ -12,7 +12,7 @@
 - 消息持久化(每个房间滚动保留最近 1000 条),支持翻页加载历史
 - 在线列表、私聊(悄悄话)
 - 简体中文/繁体中文/English/Español 四语言界面,根据浏览器语言自动切换,也可手动选择
-- 一整套针对匿名公共聊天室的防滥用机制(见下文"设计取舍")
+- 一整套针对匿名公共聊天室的防滥用机制(见下文"防滥用/资源保护""设计取舍")
 
 ## 架构
 
@@ -40,12 +40,14 @@ Cloudflare Workers + Durable Objects,没有独立后端服务器,没有数据库
 
 ```
 src/
-  index.ts          Worker 入口,路由分发、CSP、robots.txt、客户端错误上报接口
+  index.ts          Worker 入口,路由分发、CSP、robots.txt、客户端错误上报接口、限流
   chat-room.ts       ChatRoom Durable Object:消息存储、身份、在线状态、私聊、防滥用
   room-registry.ts   RoomRegistry Durable Object:新房间创建限流
   room-name.ts       房间名校验规则(含 CJK/punycode 处理)
   i18n.ts            多语言文案 + 语言解析逻辑
   pages.ts           页面 HTML/CSS/前端 JS(没有构建步骤,直接手写字符串模板)
+  body-utils.ts       流式读取并按字节数上限截断请求体,不信任 Content-Length
+  rate-limit.ts       内存级滑动窗口限流器(按 IP),index.ts 里两处限流共用
   node-punycode.d.ts node:punycode 的最小类型声明
 test/                单元测试(见下文"测试")
 scripts/
@@ -61,12 +63,14 @@ wrangler.jsonc        Worker 配置(路由、Durable Object 绑定、迁移)
 npm install
 ```
 
-需要一个 Cloudflare API Token(Account Owned Token,新格式 `cfat_` 开头),放在 `secret/cfkey.txt`(这个文件被 `.gitignore` 排除,不会进仓库)。权限至少需要:
+需要一个 Cloudflare API Token(Account Owned Token,新格式 `cfat_` 开头),放在 `secret/cfkey.txt`(这个文件被 `.gitignore` 排除,不会进仓库)。这个项目实际用到的权限:
 
 - Zone → DNS → Edit(仅第一次配置通配符 DNS 记录需要,日常开发用不到)
 - Zone → Zone Settings → Edit
 - Account → Workers Scripts → Edit
 - Account → Account Analytics → Read(可选,排查线上问题时有用)
+
+> 目前线上这个 token 实际权限比上面这份列表更宽(还带着 `zone:edit`、`waf:read/edit`、`logs:read`),这几个本仓库的代码从没用过——不确定是当初建 token 时模板带的,还是留给别的用途,值得回去按最小权限原则收紧一下。
 
 ```bash
 npm run typecheck    # tsc --noEmit
@@ -91,10 +95,38 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 `test/` 目录下按测试目标分两类:
 
-- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。
-- **复刻逻辑**的(其余几个):`chat-room.ts` 和 `room-registry.ts` 是 Durable Object,依赖 `this.ctx.storage.sql`、`crypto.subtle`、Hibernatable WebSocket 这些 Workers 专属 API,没法在普通 Node 里直接跑;`pages.ts` 里的客户端逻辑活在拼 HTML 字符串的模板字面量里,也没法作为模块直接 import。这些测试文件顶部都有注释说明——**改了对应的真实实现,要记得手动同步改测试**,它们不会自动帮你发现代码漂移。
+- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`、`body-utils.test.mjs`、`rate-limit.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。`body-utils.ts`/`rate-limit.ts` 特意从 `index.ts` 拆出来单独成文件,就是为了能被这样直接测——`index.ts` 本身因为顶部 import 了依赖 `cloudflare:workers` 的 `chat-room.ts`/`room-registry.ts`,没法在 Node 里加载。
+- **复刻逻辑**的(`identity-hash`、`control-chars`、`day-grouping`、`cooldown-jail`、`room-registry`、`presence`、`media-embed`、`message-size`):`chat-room.ts` 和 `room-registry.ts` 是 Durable Object,依赖 `this.ctx.storage.sql`、`crypto.subtle`、Hibernatable WebSocket 这些 Workers 专属 API,没法在普通 Node 里直接跑;`pages.ts` 里的客户端逻辑活在拼 HTML 字符串的模板字面量里,也没法作为模块直接 import。这些测试文件顶部都有注释说明——**改了对应的真实实现,要记得手动同步改测试**,它们不会自动帮你发现代码漂移。
 
 `scripts/render-and-check.mjs`(即 `npm run check:pages`)是另一类校验:用 esbuild 真实打包 `pages.ts`,调用真实的 `renderChatPage`/`renderLandingPage`,对产出的每个 `<script>` 块做语法解析。这是专门为了防一类曾经真实上线过的 bug——`pages.ts` 把前端 JS 写在 TypeScript 模板字符串里,`\/`、`\s`、`\.`、`\]` 这类反斜杠转义会被外层模板字符串自己先吃掉一层,直接写在字符串里的正则表达式很容易被静默改坏,只对 `${...}` 占位符做替换的语法检查测不出这个问题,必须走真实渲染。
+
+## 防滥用/资源保护
+
+请求进来之后,按顺序经过这几层,每一层都在上一层挡不住的地方兜底:
+
+```
+请求进来
+ → 通用限流(每 IP 60次/10秒,index.ts)—— 挡在 RoomRegistry/页面渲染之前
+ → HIDE_LANDING_PAGE 检查(见下)
+ → 房间名合法性校验(便宜,格式不对直接拒绝)
+ → RoomRegistry:新房间创建限流(10次/10分钟/IP,超了封24小时)
+ → WS 升级请求:jail 检查 → 单IP连接数上限(8) → 单房间连接数上限(200)
+ → 已建立连接:消息频率(20条/10秒)→ 同身份发言冷却(5秒)→
+   消息大小(原始8KB/文本2000字符,超限零容忍断连,不走5次违规才断的宽容策略)
+```
+
+单条 WebSocket 消息 Cloudflare 平台本身允许最大 32 MiB,所以大小检查特意放在
+`JSON.parse`/正则处理之前,不然处理超大消息本身就要先付出真实成本才能被拒绝。
+`/client-error` 走的是单独一条更严格的限流(5次/分钟),而且用流式读取,不信任
+客户端自报的 `Content-Length`。
+
+**已知没做、评估过不值得现在动的残留风险**:
+- 分布式攻击(很多个不同 IP,每个 IP 都在自己的限额内活动)——按 IP 限流对这个天然没辙,得靠 Cloudflare 边缘层的 Rate Limiting Rules(付费),算平台级残留敞口
+- 全站房间总数没有硬上限,只有创建速率限制——但每个房间存储本身有 1000 条滚动上限,算下来即使攒了几千个房间也就几 MB,离"值得专门处理"的量级还很远
+
+## 上线前的开关
+
+`src/index.ts` 顶部的 `HIDE_LANDING_PAGE = true`:裸域名(`godot.chat`/`www.godot.chat`)现在一律返回 404,不管什么路径什么方法,在其他所有路由判断之前拦截——这是正式开放前"不想被探测到"的临时措施。房间子域名完全不受影响,该怎么用还怎么用。**正式上线时把这个改成 `false` 重新部署**,就是一行改动。
 
 ## 设计取舍
 
@@ -115,4 +147,4 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 ## 版本历史
 
-用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.16.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
+用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.19.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
