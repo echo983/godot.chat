@@ -274,9 +274,9 @@ export function renderChatPage(room: string, locale: Locale): string {
       return 'https://api.dicebear.com/9.x/identicon/svg?seed=' + encodeURIComponent(hashId) + '&size=64';
     }
 
-    const URL_RE = /https?:\/\/[^\s<>"']+/g;
-    const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i;
-    const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov)$/i;
+    const URL_RE = /https?:\\/\\/[^\\s<>"']+/g;
+    const IMAGE_EXT = /\\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i;
+    const VIDEO_EXT = /\\.(mp4|webm|ogg|ogv|mov)$/i;
 
     function classifyMediaUrl(url) {
       let parsed;
@@ -301,7 +301,7 @@ export function renderChatPage(room: string, locale: Locale): string {
         let url = match[0];
         let end = match.index + url.length;
 
-        const trailing = /[.,;:!?)\]}'"]+$/.exec(url);
+        const trailing = /[.,;:!?)\\]}'"]+$/.exec(url);
         if (trailing) {
           url = url.slice(0, url.length - trailing[0].length);
           end -= trailing[0].length;
