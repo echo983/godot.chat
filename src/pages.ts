@@ -87,9 +87,16 @@ export function renderChatPage(room: string, locale: Locale): string {
   .row.mine .msg { background: #dbeafe; }
   form { display: flex; gap: 0.5rem; padding: 0.8rem; border-top: 1px solid #eee; }
   input { flex: 1; padding: 0.6em 0.8em; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-  button { padding: 0.6em 1.2em; font-size: 1rem; border: none; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; }
+  #text { flex: 1; padding: 0.6em 0.8em; font-size: 1rem; font-family: inherit; line-height: 1.4; border: 1px solid #ccc; border-radius: 6px; resize: none; max-height: 7.5rem; overflow-y: auto; }
+  button { padding: 0.6em 1.2em; font-size: 1rem; border: none; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; align-self: flex-end; }
   button:disabled { background: #ccc; cursor: not-allowed; }
-  #status { font-size: 0.8rem; color: #999; padding: 0 1rem; }
+  #status {
+    position: fixed; left: 50%; bottom: 4.5rem; transform: translateX(-50%);
+    background: rgba(20,20,20,0.85); color: #fff; padding: 0.4em 1em; border-radius: 999px;
+    font-size: 0.8rem; max-width: 85vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s ease; z-index: 10;
+  }
+  #status.show { opacity: 1; }
   dialog { border: none; border-radius: 12px; padding: 1.5rem; max-width: 20rem; width: 90%; }
   dialog::backdrop { background: rgba(0,0,0,0.4); }
   dialog h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
@@ -105,10 +112,10 @@ export function renderChatPage(room: string, locale: Locale): string {
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
   </header>
-  <div id="status">${m.connecting}</div>
+  <div id="status"></div>
   <div id="log"></div>
   <form id="send">
-    <input id="text" maxlength="2000" autocomplete="off" placeholder="${m.textPlaceholder}">
+    <textarea id="text" rows="1" maxlength="2000" autocomplete="off" autofocus placeholder="${m.textPlaceholder}"></textarea>
     <button id="sendBtn" type="submit" disabled>${m.sendButton}</button>
   </form>
 
@@ -116,7 +123,7 @@ export function renderChatPage(room: string, locale: Locale): string {
     <h2>${m.nickDialogTitle}</h2>
     <p>${m.nickDialogBody}</p>
     <form id="nickForm">
-      <input id="nickInput" maxlength="20" autocomplete="off" placeholder="${m.nickInputPlaceholder}" required>
+      <input id="nickInput" maxlength="20" autocomplete="off" autofocus placeholder="${m.nickInputPlaceholder}" required>
       <button type="submit">${m.nickConfirmButton}</button>
     </form>
   </dialog>
@@ -167,6 +174,17 @@ export function renderChatPage(room: string, locale: Locale): string {
       meEl.appendChild(label);
     }
 
+    let statusTimer = null;
+    function showStatus(text, durationMs) {
+      status.textContent = text;
+      status.classList.add('show');
+      clearTimeout(statusTimer);
+      const duration = durationMs === undefined ? 2500 : durationMs;
+      if (duration > 0) {
+        statusTimer = setTimeout(() => status.classList.remove('show'), duration);
+      }
+    }
+
     function openNickDialog() {
       nickInput.value = nickname;
       if (typeof nickDialog.showModal === 'function') nickDialog.showModal();
@@ -176,18 +194,20 @@ export function renderChatPage(room: string, locale: Locale): string {
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host + '/ws');
+    showStatus(I18N.chat.connecting);
 
     function sendJSON(obj) {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
     }
 
     ws.onopen = () => {
-      status.textContent = I18N.chat.connected;
+      showStatus(I18N.chat.connected);
       sendJSON({ type: 'hello', secret, nickname });
       if (!nickname) openNickDialog();
+      else textInput.focus();
     };
-    ws.onclose = () => { status.textContent = I18N.chat.disconnected; sendBtn.disabled = true; };
-    ws.onerror = () => { status.textContent = I18N.chat.connectionError; };
+    ws.onclose = () => { showStatus(I18N.chat.disconnected); sendBtn.disabled = true; };
+    ws.onerror = () => { showStatus(I18N.chat.connectionError); };
 
     const dayFormatter = new Intl.DateTimeFormat(LOCALE, { year: 'numeric', month: 'long', day: 'numeric' });
     const timeFormatter = new Intl.DateTimeFormat(LOCALE, { hour: '2-digit', minute: '2-digit' });
@@ -301,7 +321,7 @@ export function renderChatPage(room: string, locale: Locale): string {
       }
 
       if (data.type === 'error') {
-        status.textContent = I18N.chat.errors[data.code] || data.code;
+        showStatus(I18N.chat.errors[data.code] || data.code);
         return;
       }
 
@@ -338,6 +358,21 @@ export function renderChatPage(room: string, locale: Locale): string {
       localStorage.setItem(NICK_KEY, nickname);
       sendJSON({ type: 'rename', nickname });
       nickDialog.close();
+      textInput.focus();
+    });
+
+    function resizeTextInput() {
+      textInput.style.height = 'auto';
+      textInput.style.height = textInput.scrollHeight + 'px';
+    }
+    textInput.addEventListener('input', resizeTextInput);
+
+    // 回车发送,Shift+回车换行(textarea 默认不会自动提交表单,换行是原生行为不用特殊处理)
+    textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendForm.requestSubmit();
+      }
     });
 
     sendForm.addEventListener('submit', (e) => {
@@ -346,6 +381,7 @@ export function renderChatPage(room: string, locale: Locale): string {
       if (!text || !nickname) return;
       sendJSON({ type: 'chat', text });
       textInput.value = '';
+      resizeTextInput();
     });
 
     ${LANG_SWITCH_SCRIPT}
