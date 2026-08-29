@@ -114,9 +114,9 @@ export function renderChatPage(room: string, locale: Locale): string {
   #lightbox::backdrop { background: rgba(0,0,0,0.85); }
   #lightbox img { display: block; max-width: 90vw; max-height: 90vh; border-radius: 6px; cursor: zoom-out; }
   .lightbox-close {
-    position: fixed; top: 1rem; right: 1rem; z-index: 30; width: 2.2rem; height: 2.2rem;
-    background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%;
-    font-size: 1.3rem; line-height: 1; cursor: pointer;
+    position: fixed; top: 1rem; right: 1.2rem; z-index: 30; width: auto; height: auto;
+    background: none; color: #fff; border: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    font-size: 2rem; line-height: 1; padding: 0; cursor: pointer;
   }
   #recoverySection { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; font-size: 0.8rem; }
   #recoverySection summary { cursor: pointer; color: #555; }
