@@ -1,5 +1,6 @@
 import { normalizeRoomName } from "./room-name";
 import { renderChatPage, renderLandingPage } from "./pages";
+import { resolveLocale } from "./i18n";
 import { ChatRoom } from "./chat-room";
 
 export { ChatRoom };
@@ -24,11 +25,13 @@ export default {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
 
+    const locale = resolveLocale(request);
+
     if (host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}`) {
       if (request.method !== "GET") {
         return new Response("Method not allowed", { status: 405 });
       }
-      return new Response(renderLandingPage(), { headers: HTML_HEADERS });
+      return new Response(renderLandingPage(locale), { headers: HTML_HEADERS });
     }
 
     if (!host.endsWith(`.${ROOT_DOMAIN}`)) {
@@ -65,6 +68,6 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    return new Response(renderChatPage(room), { headers: HTML_HEADERS });
+    return new Response(renderChatPage(room, locale), { headers: HTML_HEADERS });
   },
 } satisfies ExportedHandler<Env>;

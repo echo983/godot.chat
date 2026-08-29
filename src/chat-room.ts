@@ -216,7 +216,7 @@ export class ChatRoom extends DurableObject<Env> {
         const nickname = normalizeNickname(msg.nickname);
         if (!nickname) {
           writeState(ws, state);
-          ws.send(JSON.stringify({ type: "error", message: "昵称不合法" }));
+          ws.send(JSON.stringify({ type: "error", code: "nickname_invalid" }));
           return;
         }
         state.nickname = nickname;
@@ -228,7 +228,7 @@ export class ChatRoom extends DurableObject<Env> {
       case "chat": {
         if (!state.hashId || !state.nickname) {
           writeState(ws, state);
-          ws.send(JSON.stringify({ type: "error", message: "请先设置昵称" }));
+          ws.send(JSON.stringify({ type: "error", code: "nickname_required" }));
           return;
         }
 

@@ -1,24 +1,50 @@
-export function renderLandingPage(): string {
+import { LOCALE_LABELS, SUPPORTED_LOCALES, t, type Locale } from "./i18n";
+
+function renderLangSwitcher(locale: Locale): string {
+  const options = SUPPORTED_LOCALES.map(
+    (code) =>
+      `<option value="${code}"${code === locale ? " selected" : ""}>${LOCALE_LABELS[code]}</option>`,
+  ).join("");
+  return `<select id="langSelect" aria-label="Language">${options}</select>`;
+}
+
+// 防止翻译文案里万一出现 "</script>" 之类的片段把内联脚本标签截断
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+const LANG_SWITCH_SCRIPT = `
+document.getElementById('langSelect').addEventListener('change', (e) => {
+  document.cookie = 'lang=' + e.target.value + '; domain=.godot.chat; path=/; max-age=31536000; samesite=lax';
+  location.reload();
+});
+`;
+
+export function renderLandingPage(locale: Locale): string {
+  const m = t(locale).landing;
   return `<!doctype html>
-<html lang="zh">
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>godot.chat</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; }
+  nav { display: flex; justify-content: flex-end; }
   code { background: #f2f2f2; padding: 0.15em 0.4em; border-radius: 4px; }
   form { margin-top: 2rem; display: flex; gap: 0.5rem; }
   input { flex: 1; padding: 0.6em 0.8em; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
   button { padding: 0.6em 1.2em; font-size: 1rem; border: none; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; }
+  select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; }
 </style>
 </head>
 <body>
+  <nav>${renderLangSwitcher(locale)}</nav>
   <h1>godot.chat</h1>
-  <p>任意子域名都是一个独立聊天室,进去就自动创建。例如 <code>newyork.godot.chat</code>、<code>apple.godot.chat</code>。</p>
+  <p>${m.intro}</p>
   <form id="go">
-    <input id="room" placeholder="房间名 (1-12 位小写字母/数字/-)" maxlength="12" autocomplete="off">
-    <button type="submit">进入</button>
+    <input id="room" placeholder="${m.roomPlaceholder}" maxlength="12" autocomplete="off">
+    <button type="submit">${m.enterButton}</button>
   </form>
   <script>
     document.getElementById('go').addEventListener('submit', (e) => {
@@ -27,14 +53,17 @@ export function renderLandingPage(): string {
       if (!room) return;
       window.location.href = 'https://' + room + '.godot.chat/';
     });
+    ${LANG_SWITCH_SCRIPT}
   </script>
 </body>
 </html>`;
 }
 
-export function renderChatPage(room: string): string {
+export function renderChatPage(room: string, locale: Locale): string {
+  const messages = t(locale);
+  const m = messages.chat;
   return `<!doctype html>
-<html lang="zh">
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,6 +74,7 @@ export function renderChatPage(room: string): string {
   header .room { flex: 1; }
   #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
   #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; }
+  select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; }
   #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
   .row { display: flex; gap: 0.5rem; align-items: flex-end; }
   .row.mine { flex-direction: row-reverse; }
@@ -71,25 +101,28 @@ export function renderChatPage(room: string): string {
 <body>
   <header>
     <span class="room">#${room}</span>
-    <span id="me" title="点击更换昵称"></span>
+    <span id="me" title="${m.changeNicknameTitle}"></span>
+    ${renderLangSwitcher(locale)}
   </header>
-  <div id="status">连接中…</div>
+  <div id="status">${m.connecting}</div>
   <div id="log"></div>
   <form id="send">
-    <input id="text" maxlength="2000" autocomplete="off" placeholder="说点什么…">
-    <button id="sendBtn" type="submit" disabled>发送</button>
+    <input id="text" maxlength="2000" autocomplete="off" placeholder="${m.textPlaceholder}">
+    <button id="sendBtn" type="submit" disabled>${m.sendButton}</button>
   </form>
 
   <dialog id="nickDialog">
-    <h2>选一个昵称</h2>
-    <p>昵称右边会带一个基于你身份哈希生成的头像和后四位,别人改不出跟你一样的。</p>
+    <h2>${m.nickDialogTitle}</h2>
+    <p>${m.nickDialogBody}</p>
     <form id="nickForm">
-      <input id="nickInput" maxlength="20" autocomplete="off" placeholder="1-20 个字符" required>
-      <button type="submit">确定</button>
+      <input id="nickInput" maxlength="20" autocomplete="off" placeholder="${m.nickInputPlaceholder}" required>
+      <button type="submit">${m.nickConfirmButton}</button>
     </form>
   </dialog>
 
   <script>
+    const I18N = ${jsonForScript(messages)};
+
     const log = document.getElementById('log');
     const status = document.getElementById('status');
     const meEl = document.getElementById('me');
@@ -127,7 +160,7 @@ export function renderChatPage(room: string): string {
       img.src = avatarUrl(myHashId);
       img.alt = '';
       const label = document.createElement('span');
-      label.textContent = (nickname || '未命名') + ' (' + myHashId.slice(-4) + ')';
+      label.textContent = (nickname || I18N.chat.unnamed) + ' (' + myHashId.slice(-4) + ')';
       meEl.appendChild(img);
       meEl.appendChild(label);
     }
@@ -147,12 +180,12 @@ export function renderChatPage(room: string): string {
     }
 
     ws.onopen = () => {
-      status.textContent = '已连接';
+      status.textContent = I18N.chat.connected;
       sendJSON({ type: 'hello', secret, nickname });
       if (!nickname) openNickDialog();
     };
-    ws.onclose = () => { status.textContent = '连接已断开'; sendBtn.disabled = true; };
-    ws.onerror = () => { status.textContent = '连接出错'; };
+    ws.onclose = () => { status.textContent = I18N.chat.disconnected; sendBtn.disabled = true; };
+    ws.onerror = () => { status.textContent = I18N.chat.connectionError; };
 
     function appendMessage(m) {
       const row = document.createElement('div');
@@ -167,7 +200,7 @@ export function renderChatPage(room: string): string {
 
       const who = document.createElement('div');
       who.className = 'who';
-      who.textContent = (m.nickname || '匿名') + ' (' + m.hashId.slice(-4) + ')';
+      who.textContent = (m.nickname || I18N.chat.anonymous) + ' (' + m.hashId.slice(-4) + ')';
 
       const msg = document.createElement('div');
       msg.className = 'msg';
@@ -195,7 +228,7 @@ export function renderChatPage(room: string): string {
       }
 
       if (data.type === 'error') {
-        status.textContent = data.message || '出错了';
+        status.textContent = I18N.chat.errors[data.code] || data.code;
         return;
       }
 
@@ -228,6 +261,8 @@ export function renderChatPage(room: string): string {
       sendJSON({ type: 'chat', text });
       textInput.value = '';
     });
+
+    ${LANG_SWITCH_SCRIPT}
   </script>
 </body>
 </html>`;
