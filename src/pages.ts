@@ -101,7 +101,9 @@ export function renderChatPage(room: string, locale: Locale): string {
   #status.show { opacity: 1; }
   dialog { border: none; border-radius: 12px; padding: 1.5rem; max-width: 20rem; width: 90%; }
   dialog::backdrop { background: rgba(0,0,0,0.4); }
-  dialog h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+  .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .dialog-header h2 { margin: 0; font-size: 1.1rem; }
+  .dialog-close { background: none; border: none; color: #999; cursor: pointer; font-size: 1.3rem; padding: 0; width: auto; line-height: 1; flex-shrink: 0; }
   dialog p { margin: 0 0 1rem; font-size: 0.85rem; color: #666; }
   dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
@@ -152,7 +154,10 @@ export function renderChatPage(room: string, locale: Locale): string {
   </form>
 
   <dialog id="nickDialog">
-    <h2>${m.nickDialogTitle}</h2>
+    <div class="dialog-header">
+      <h2>${m.nickDialogTitle}</h2>
+      <button type="button" class="dialog-close" id="nickDialogClose" aria-label="${m.closeLabel}">×</button>
+    </div>
     <p>${m.nickDialogBody}</p>
     <form id="nickForm">
       <input id="nickInput" maxlength="20" autocomplete="off" autofocus placeholder="${m.nickInputPlaceholder}" required>
@@ -175,14 +180,17 @@ export function renderChatPage(room: string, locale: Locale): string {
   </dialog>
 
   <dialog id="onlineDialog">
-    <h2>${m.onlineListTitle}</h2>
+    <div class="dialog-header">
+      <h2>${m.onlineListTitle}</h2>
+      <button type="button" class="dialog-close" id="onlineDialogClose" aria-label="${m.closeLabel}">×</button>
+    </div>
     <div id="onlineList"></div>
   </dialog>
 
   <div id="whisperPanel" class="whisper-panel">
     <div class="whisper-header">
       <span id="whisperTitle"></span>
-      <button type="button" id="whisperClose" aria-label="${m.whisperClose}">×</button>
+      <button type="button" id="whisperClose" aria-label="${m.closeLabel}">×</button>
     </div>
     <div id="whisperLog"></div>
     <form id="whisperForm">
@@ -208,8 +216,10 @@ export function renderChatPage(room: string, locale: Locale): string {
     const copyRecoveryBtn = document.getElementById('copyRecoveryBtn');
     const recoveryInput = document.getElementById('recoveryInput');
     const restoreRecoveryBtn = document.getElementById('restoreRecoveryBtn');
+    const nickDialogClose = document.getElementById('nickDialogClose');
     const onlineBtn = document.getElementById('onlineBtn');
     const onlineDialog = document.getElementById('onlineDialog');
+    const onlineDialogClose = document.getElementById('onlineDialogClose');
     const onlineList = document.getElementById('onlineList');
     const whisperPanel = document.getElementById('whisperPanel');
     const whisperTitle = document.getElementById('whisperTitle');
@@ -291,6 +301,18 @@ export function renderChatPage(room: string, locale: Locale): string {
     }
 
     meEl.addEventListener('click', openNickDialog);
+
+    // 点弹窗自身(遮罩区域,不是里面的内容)也能关闭,不是只能靠 Esc 键
+    function closeOnBackdropClick(dialog) {
+      dialog.addEventListener('click', (e) => {
+        if (e.target === dialog) dialog.close();
+      });
+    }
+    closeOnBackdropClick(nickDialog);
+    closeOnBackdropClick(onlineDialog);
+
+    nickDialogClose.addEventListener('click', () => nickDialog.close());
+    onlineDialogClose.addEventListener('click', () => onlineDialog.close());
 
     let presenceUsers = [];
     let whisperTarget = null;

@@ -42,7 +42,7 @@ export interface Messages {
     onlineListTitle: string;
     whisperWith: string;
     whisperPlaceholder: string;
-    whisperClose: string;
+    closeLabel: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
@@ -90,7 +90,7 @@ const MESSAGES: Record<Locale, Messages> = {
       onlineListTitle: "Who's here",
       whisperWith: "Private message to {nickname}",
       whisperPlaceholder: "Send a private message…",
-      whisperClose: "Close",
+      closeLabel: "Close",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
@@ -136,7 +136,7 @@ const MESSAGES: Record<Locale, Messages> = {
       onlineListTitle: "Quién está aquí",
       whisperWith: "Mensaje privado a {nickname}",
       whisperPlaceholder: "Envía un mensaje privado…",
-      whisperClose: "Cerrar",
+      closeLabel: "Cerrar",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
@@ -180,7 +180,7 @@ const MESSAGES: Record<Locale, Messages> = {
       onlineListTitle: "在线列表",
       whisperWith: "私聊 {nickname}",
       whisperPlaceholder: "发一句悄悄话…",
-      whisperClose: "关闭",
+      closeLabel: "关闭",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
@@ -224,7 +224,7 @@ const MESSAGES: Record<Locale, Messages> = {
       onlineListTitle: "在線列表",
       whisperWith: "私訊 {nickname}",
       whisperPlaceholder: "傳一句悄悄話…",
-      whisperClose: "關閉",
+      closeLabel: "關閉",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
