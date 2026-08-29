@@ -87,6 +87,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   .row.mine .who { text-align: right; }
   .msg { padding: 0.5em 0.8em; background: #f2f2f2; border-radius: 8px; word-break: break-word; white-space: pre-wrap; }
   .row.mine .msg { background: #dbeafe; }
+  .msg-media { display: block; max-width: 100%; max-height: 20rem; border-radius: 8px; margin-top: 0.4rem; }
   form { display: flex; gap: 0.5rem; padding: 0.8rem; border-top: 1px solid #eee; }
   input { flex: 1; padding: 0.6em 0.8em; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
   #text { flex: 1; padding: 0.6em 0.8em; font-size: 1rem; font-family: inherit; line-height: 1.4; border: 1px solid #ccc; border-radius: 6px; resize: none; max-height: 7.5rem; overflow-y: auto; }
@@ -273,6 +274,72 @@ export function renderChatPage(room: string, locale: Locale): string {
       return 'https://api.dicebear.com/9.x/identicon/svg?seed=' + encodeURIComponent(hashId) + '&size=64';
     }
 
+    const URL_RE = /https?:\/\/[^\s<>"']+/g;
+    const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i;
+    const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov)$/i;
+
+    function classifyMediaUrl(url) {
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return null;
+      }
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+      if (IMAGE_EXT.test(parsed.pathname)) return 'image';
+      if (VIDEO_EXT.test(parsed.pathname)) return 'video';
+      return null;
+    }
+
+    // 把消息文本里的图片/视频链接原地换成 <img>/<video>,加载失败就退回纯文本——
+    // 用户自己保证链接靠谱,我们只负责"能加载就展示,加载不了就当文字"
+    function renderMessageContent(container, text) {
+      URL_RE.lastIndex = 0;
+      let lastIndex = 0;
+      let match;
+      while ((match = URL_RE.exec(text)) !== null) {
+        let url = match[0];
+        let end = match.index + url.length;
+
+        const trailing = /[.,;:!?)\]}'"]+$/.exec(url);
+        if (trailing) {
+          url = url.slice(0, url.length - trailing[0].length);
+          end -= trailing[0].length;
+        }
+
+        if (match.index > lastIndex) {
+          container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+
+        const kind = classifyMediaUrl(url);
+        if (kind === 'image') {
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = url;
+          img.className = 'msg-media';
+          img.loading = 'lazy';
+          img.referrerPolicy = 'no-referrer';
+          img.onerror = () => img.replaceWith(document.createTextNode(url));
+          container.appendChild(img);
+        } else if (kind === 'video') {
+          const video = document.createElement('video');
+          video.src = url;
+          video.controls = true;
+          video.preload = 'metadata';
+          video.className = 'msg-media';
+          video.onerror = () => video.replaceWith(document.createTextNode(url));
+          container.appendChild(video);
+        } else {
+          container.appendChild(document.createTextNode(url));
+        }
+
+        lastIndex = end;
+      }
+      if (lastIndex < text.length) {
+        container.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+    }
+
     function renderMe() {
       if (!myHashId) return;
       meEl.innerHTML = '';
@@ -371,7 +438,7 @@ export function renderChatPage(room: string, locale: Locale): string {
     function appendWhisperMessage(text, mine) {
       const el = document.createElement('div');
       el.className = 'whisper-msg' + (mine ? ' mine' : '');
-      el.textContent = text;
+      renderMessageContent(el, text);
       whisperLog.appendChild(el);
       whisperLog.scrollTop = whisperLog.scrollHeight;
     }
@@ -433,7 +500,7 @@ export function renderChatPage(room: string, locale: Locale): string {
 
       const msg = document.createElement('div');
       msg.className = 'msg';
-      msg.textContent = m.text;
+      renderMessageContent(msg, m.text);
 
       bubble.appendChild(who);
       bubble.appendChild(msg);
