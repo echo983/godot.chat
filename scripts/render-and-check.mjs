@@ -46,7 +46,9 @@ function checkScript(html, label) {
   }
 }
 
-const rootDomains = ["godot.chat", "staging.godot.chat"];
+// 第二个域名纯粹是为了验证 rootDomain 参数化没有退化回硬编码
+// "godot.chat"——不代表真的部署了别的环境
+const rootDomains = ["godot.chat", "example.test"];
 
 for (const locale of locales) {
   for (const rootDomain of rootDomains) {

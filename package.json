@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --env \"\"",
-    "deploy:staging": "wrangler deploy --env staging",
+    "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "check:pages": "node scripts/render-and-check.mjs",
     "test": "node test/run-all.mjs && npm run check:pages"

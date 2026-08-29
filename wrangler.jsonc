@@ -21,30 +21,5 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] },
     { "tag": "v2", "new_sqlite_classes": ["RoomRegistry"] }
-  ],
-  // staging 是完全独立的 Worker 脚本(godot-chat-staging),Durable Object 存储
-  // 跟生产零共享——bindings/migrations 在 wrangler 里不会跨 env 自动继承,这里
-  // 必须重新声明一遍
-  "env": {
-    "staging": {
-      "name": "godot-chat-staging",
-      "vars": {
-        "ROOT_DOMAIN": "staging.godot.chat"
-      },
-      "routes": [
-        { "pattern": "staging.godot.chat/*", "zone_name": "godot.chat" },
-        { "pattern": "*.staging.godot.chat/*", "zone_name": "godot.chat" }
-      ],
-      "durable_objects": {
-        "bindings": [
-          { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
-          { "name": "ROOM_REGISTRY", "class_name": "RoomRegistry" }
-        ]
-      },
-      "migrations": [
-        { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] },
-        { "tag": "v2", "new_sqlite_classes": ["RoomRegistry"] }
-      ]
-    }
-  }
+  ]
 }

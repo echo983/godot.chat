@@ -69,34 +69,23 @@ npm install
 - Account → Account Analytics → Read(可选,排查线上问题时有用)
 
 ```bash
-npm run typecheck        # tsc --noEmit
-npm test                  # 跑 test/ 下全部单测 + check:pages
-npm run dev                # 本地 wrangler dev
-npm run deploy:staging       # 部署到 staging(godot-chat-staging)
-npm run deploy                # 部署到生产(godot-chat)
+npm run typecheck    # tsc --noEmit
+npm test              # 跑 test/ 下全部单测 + check:pages
+npm run dev            # 本地 wrangler dev
+npm run deploy          # 部署到生产(godot-chat)
 ```
 
-`deploy`/`deploy:staging` 都需要 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` 环境变量,比如:
+`deploy` 需要 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` 环境变量,比如:
 
 ```bash
-CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号ID> npm run deploy:staging
+CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号ID> npm run deploy
 ```
 
-**已知的本地开发限制**:`wrangler dev` 在 `wrangler.jsonc` 配置了 `routes` 的情况下,不会尊重自定义的 `Host` 请求头做子域名路由(内部一律按配置的 zone 处理)——所以本地测"进哪个房间"这件事测不出来,只能测通用逻辑。真正验证子域名路由要么部署到 staging 测,要么临时改一份不带 `routes` 的 wrangler 配置单独跑。
+**已知的本地开发限制**:`wrangler dev` 在 `wrangler.jsonc` 配置了 `routes` 的情况下,不会尊重自定义的 `Host` 请求头做子域名路由(内部一律按配置的 zone 处理)——所以本地测"进哪个房间"这件事测不出来,只能测通用逻辑,真正验证子域名路由只能直接部署到线上测。
 
-## Staging 环境
+没有 CI——`npm test`、`npm run typecheck` 都是手动跑,直接部署到生产,没有中间环节。
 
-`wrangler.jsonc` 里的 `env.staging` 定义了一个完全独立的部署:
-
-- 独立的 Worker 脚本名(`godot-chat-staging`,生产是 `godot-chat`)
-- 独立的 Durable Object 存储——跟生产**零数据共享**,staging 里建的房间、发的消息、封禁记录都不会碰到生产,反过来也一样
-- 独立的域名:`staging.godot.chat` / `*.staging.godot.chat`(对应的通配符 DNS 记录已经建好)
-- `robots.txt` 和页面的 `<meta name="robots">` 在 staging 上一律 `noindex, nofollow`,不区分是不是房间页——生产的裸域名首页会被收录,staging 完全不会
-- 页面标题/语言 cookie 的作用域都会显示成实际的 `rootDomain`(生产是 `godot.chat`,staging 是 `staging.godot.chat`),这样从 UI 上就能一眼分清自己在哪个环境,而且语言偏好 cookie 不会因为作用域算错互相污染
-
-`ROOT_DOMAIN` 是这一切的开关,通过 `wrangler.jsonc` 里的 `vars` 按环境注入,`src/index.ts` 全部从 `env.ROOT_DOMAIN` 读取,没有硬编码。
-
-没有 CI——`npm test`、`npm run typecheck`、`npm run deploy:staging` 都是手动跑,目前也没有强制"先过 staging 再上生产"的流程约束,靠自觉。
+`src/index.ts`/`src/pages.ts` 里的域名不是硬编码的,读的是 `wrangler.jsonc` 里 `vars.ROOT_DOMAIN`(目前只有一个值:`godot.chat`)——这是给"曾经尝试过 staging 环境"留下的痕迹,见下文"尚未实现"。
 
 ## 测试
 
@@ -122,7 +111,7 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 - 消息撤回/编辑(刻意不做)
 - 举报/禁言机制、房间目录浏览、服务条款/社区准则(暂时搁置)
 - 构想里的核心功能——LLM 自动从聊天析出帖子、结晶/结石/矿渣/化石分类与投票、生命周期管理——完全未开始
-- CI/CD(staging 环境已经有了,见上文,但没有自动化流水线,也没有强制"先过 staging"的约束)
+- CI/CD、staging 环境——**试过一次 staging,已经撤掉了**。方案是给 staging 一套独立的 Worker 脚本 + 独立域名(`staging.godot.chat` / `*.staging.godot.chat`),但这个产品的核心机制是"任意子域名自动建房",意味着 staging 也需要 `*.staging.godot.chat` 这种二级通配符——而 Cloudflare 免费的 Universal SSL 证书只覆盖"裸域名 + 一级通配符"(`godot.chat` + `*.godot.chat`),不覆盖 `*.staging.godot.chat` 这种二级通配符,会直接 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`。要解决得买 Advanced Certificate Manager(付费加订),或者把 staging 房间路由改成用路径而不是子域名(但那样就测不了这个产品最核心的子域名路由机制,失去了 staging 的意义)。评估下来风险/成本不划算,直接撤掉,以后谁想再试一次,先看这段。
 
 ## 版本历史
 
