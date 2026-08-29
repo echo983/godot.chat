@@ -12,6 +12,10 @@ export interface Env {
   ROOT_DOMAIN: string;
 }
 
+// 正式上线前不想让裸域名被扫到/探测到——先把 apex/www 一律 404,房间子域名不受影响
+// (该怎么用还怎么用,只是没有"入口页")。正式开放的时候把这个改回 false。
+const HIDE_LANDING_PAGE = true;
+
 const HTML_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
@@ -80,6 +84,11 @@ export default {
     const host = url.hostname.toLowerCase();
     const rootDomain = env.ROOT_DOMAIN;
 
+    const isLandingHost = host === rootDomain || host === `www.${rootDomain}`;
+    if (HIDE_LANDING_PAGE && isLandingHost) {
+      return new Response("Not found", { status: 404 });
+    }
+
     const locale = resolveLocale(request);
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
 
@@ -91,7 +100,7 @@ export default {
       return handleClientError(request, host, ip);
     }
 
-    if (host === rootDomain || host === `www.${rootDomain}`) {
+    if (isLandingHost) {
       if (request.method !== "GET") {
         return new Response("Method not allowed", { status: 405 });
       }
