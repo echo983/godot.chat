@@ -31,11 +31,19 @@ export interface Messages {
     nickDialogBody: string;
     nickInputPlaceholder: string;
     nickConfirmButton: string;
+    recoveryToggle: string;
+    recoveryExportHint: string;
+    recoveryCopyButton: string;
+    recoveryCopiedHint: string;
+    recoveryImportHint: string;
+    recoveryInputPlaceholder: string;
+    recoveryRestoreButton: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
       cooldown: string;
       jailed: string;
+      invalid_recovery_code: string;
     };
   };
 }
@@ -63,11 +71,20 @@ const MESSAGES: Record<Locale, Messages> = {
         "Next to your name you'll get an avatar generated from your identity hash, plus its last 4 characters — no one else can match both.",
       nickInputPlaceholder: "1-20 characters",
       nickConfirmButton: "Confirm",
+      recoveryToggle: "Identity recovery code",
+      recoveryExportHint:
+        "This is your recovery code for this room. Save it somewhere safe — paste the same code on another device or browser to keep using this identity instead of starting a new one. Anyone with this code can impersonate you here, so don't share it.",
+      recoveryCopyButton: "Copy",
+      recoveryCopiedHint: "Copied",
+      recoveryImportHint: "Already have a recovery code? Paste it here to keep your identity:",
+      recoveryInputPlaceholder: "Paste recovery code",
+      recoveryRestoreButton: "Restore",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
         cooldown: "You're sending messages too fast — wait a few seconds",
         jailed: "Too many identity switches from this connection — blocked for a while",
+        invalid_recovery_code: "That doesn't look like a valid recovery code",
       },
     },
   },
@@ -93,11 +110,20 @@ const MESSAGES: Record<Locale, Messages> = {
         "Junto a tu nombre aparecerá un avatar generado a partir del hash de tu identidad, más sus últimos 4 caracteres — nadie más podrá igualar ambos.",
       nickInputPlaceholder: "1-20 caracteres",
       nickConfirmButton: "Confirmar",
+      recoveryToggle: "Código de recuperación de identidad",
+      recoveryExportHint:
+        "Este es tu código de recuperación para esta sala. Guárdalo en un lugar seguro — pega el mismo código en otro dispositivo o navegador para seguir usando esta identidad en vez de crear una nueva. Cualquiera con este código puede hacerse pasar por ti aquí, así que no lo compartas.",
+      recoveryCopyButton: "Copiar",
+      recoveryCopiedHint: "Copiado",
+      recoveryImportHint: "¿Ya tienes un código de recuperación? Pégalo aquí para conservar tu identidad:",
+      recoveryInputPlaceholder: "Pega el código de recuperación",
+      recoveryRestoreButton: "Restaurar",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
         cooldown: "Estás enviando mensajes demasiado rápido — espera unos segundos",
         jailed: "Demasiados cambios de identidad desde esta conexión — bloqueado por un tiempo",
+        invalid_recovery_code: "Ese código de recuperación no parece válido",
       },
     },
   },
@@ -121,11 +147,20 @@ const MESSAGES: Record<Locale, Messages> = {
       nickDialogBody: "昵称右边会带一个基于你身份哈希生成的头像和后四位,别人改不出跟你一样的。",
       nickInputPlaceholder: "1-20 个字符",
       nickConfirmButton: "确定",
+      recoveryToggle: "身份恢复码",
+      recoveryExportHint:
+        "这是你在本房间的身份恢复码,保存好。换设备或换浏览器后,粘贴同一段代码就能继续用这个身份,不用重新建号。谁拿到这段代码就能在这个房间冒充你,不要分享给别人。",
+      recoveryCopyButton: "复制",
+      recoveryCopiedHint: "已复制",
+      recoveryImportHint: "已经有恢复码?粘贴到这里继续用原来的身份:",
+      recoveryInputPlaceholder: "粘贴恢复码",
+      recoveryRestoreButton: "恢复",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
         cooldown: "发言太快了,歇几秒再说",
         jailed: "短时间内切换身份太多次,已被暂时限制",
+        invalid_recovery_code: "恢复码格式不对",
       },
     },
   },
@@ -149,11 +184,20 @@ const MESSAGES: Record<Locale, Messages> = {
       nickDialogBody: "暱稱右邊會帶一個根據你的身分雜湊產生的頭像和後四碼,別人改不出跟你一樣的。",
       nickInputPlaceholder: "1-20 個字元",
       nickConfirmButton: "確定",
+      recoveryToggle: "身分復原碼",
+      recoveryExportHint:
+        "這是你在本房間的身分復原碼,保存好。換裝置或換瀏覽器後,貼上同一段代碼就能繼續用這個身分,不用重新建號。誰拿到這段代碼就能在這個房間冒充你,不要分享給別人。",
+      recoveryCopyButton: "複製",
+      recoveryCopiedHint: "已複製",
+      recoveryImportHint: "已經有復原碼?貼到這裡繼續用原來的身分:",
+      recoveryInputPlaceholder: "貼上復原碼",
+      recoveryRestoreButton: "復原",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
         cooldown: "發言太快了,歇幾秒再說",
         jailed: "短時間內切換身分太多次,已被暫時限制",
+        invalid_recovery_code: "復原碼格式不對",
       },
     },
   },

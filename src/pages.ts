@@ -105,6 +105,12 @@ export function renderChatPage(room: string, locale: Locale): string {
   dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
   dialog button { width: 100%; }
+  #recoverySection { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; font-size: 0.8rem; }
+  #recoverySection summary { cursor: pointer; color: #555; }
+  #recoverySection .hint { color: #666; margin: 0.6rem 0; font-size: 0.78rem; line-height: 1.4; }
+  .recovery-row { display: flex; gap: 0.4rem; margin-bottom: 0.8rem; }
+  .recovery-row input { flex: 1; width: auto; font-size: 0.8rem; padding: 0.4em 0.6em; margin-bottom: 0; }
+  .recovery-row button { width: auto; padding: 0.4em 0.8em; font-size: 0.8rem; }
 </style>
 </head>
 <body>
@@ -129,6 +135,20 @@ export function renderChatPage(room: string, locale: Locale): string {
       <input id="nickInput" maxlength="20" autocomplete="off" autofocus placeholder="${m.nickInputPlaceholder}" required>
       <button type="submit">${m.nickConfirmButton}</button>
     </form>
+
+    <details id="recoverySection">
+      <summary>${m.recoveryToggle}</summary>
+      <p class="hint">${m.recoveryExportHint}</p>
+      <div class="recovery-row">
+        <input id="recoveryCode" readonly>
+        <button type="button" id="copyRecoveryBtn">${m.recoveryCopyButton}</button>
+      </div>
+      <p class="hint">${m.recoveryImportHint}</p>
+      <div class="recovery-row">
+        <input id="recoveryInput" autocomplete="off" placeholder="${m.recoveryInputPlaceholder}">
+        <button type="button" id="restoreRecoveryBtn">${m.recoveryRestoreButton}</button>
+      </div>
+    </details>
   </dialog>
 
   <script>
@@ -144,6 +164,10 @@ export function renderChatPage(room: string, locale: Locale): string {
     const nickDialog = document.getElementById('nickDialog');
     const nickForm = document.getElementById('nickForm');
     const nickInput = document.getElementById('nickInput');
+    const recoveryCode = document.getElementById('recoveryCode');
+    const copyRecoveryBtn = document.getElementById('copyRecoveryBtn');
+    const recoveryInput = document.getElementById('recoveryInput');
+    const restoreRecoveryBtn = document.getElementById('restoreRecoveryBtn');
 
     const SECRET_KEY = 'godot-chat-secret';
     const NICK_KEY = 'godot-chat-nickname';
@@ -160,6 +184,30 @@ export function renderChatPage(room: string, locale: Locale): string {
     }
     let nickname = localStorage.getItem(NICK_KEY) || '';
     let myHashId = null;
+
+    recoveryCode.value = secret;
+
+    copyRecoveryBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(secret);
+        showStatus(I18N.chat.recoveryCopiedHint);
+      } catch {
+        recoveryCode.select();
+      }
+    });
+
+    restoreRecoveryBtn.addEventListener('click', () => {
+      const value = recoveryInput.value.trim().toLowerCase();
+      if (!/^[0-9a-f]{32}$/.test(value)) {
+        showStatus(I18N.chat.errors.invalid_recovery_code);
+        return;
+      }
+      secret = value;
+      localStorage.setItem(SECRET_KEY, secret);
+      recoveryCode.value = secret;
+      recoveryInput.value = '';
+      sendJSON({ type: 'hello', secret, nickname });
+    });
 
     function avatarUrl(hashId) {
       return 'https://api.dicebear.com/9.x/identicon/svg?seed=' + encodeURIComponent(hashId) + '&size=64';
