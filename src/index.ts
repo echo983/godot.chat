@@ -2,11 +2,13 @@ import { normalizeRoomName } from "./room-name";
 import { renderChatPage, renderLandingPage } from "./pages";
 import { resolveLocale } from "./i18n";
 import { ChatRoom } from "./chat-room";
+import { RoomRegistry } from "./room-registry";
 
-export { ChatRoom };
+export { ChatRoom, RoomRegistry };
 
 export interface Env {
   CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
+  ROOM_REGISTRY: DurableObjectNamespace<RoomRegistry>;
 }
 
 const ROOT_DOMAIN = "godot.chat";
@@ -46,6 +48,15 @@ export default {
     }
 
     const room = validation.room;
+
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    const registry = env.ROOM_REGISTRY.get(env.ROOM_REGISTRY.idFromName("global"));
+    const { allowed } = await registry.checkRoomAccess(room, ip);
+    if (!allowed) {
+      return new Response("Too many new rooms created from this address — try again later", {
+        status: 429,
+      });
+    }
 
     if (url.pathname === "/ws") {
       if (request.headers.get("Upgrade") !== "websocket") {

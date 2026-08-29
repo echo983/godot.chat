@@ -10,10 +10,12 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "CHAT_ROOM", "class_name": "ChatRoom" }
+      { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
+      { "name": "ROOM_REGISTRY", "class_name": "RoomRegistry" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }
+    { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["RoomRegistry"] }
   ]
 }
