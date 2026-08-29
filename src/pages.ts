@@ -63,6 +63,7 @@ export function renderChatPage(room: string): string {
   dialog::backdrop { background: rgba(0,0,0,0.4); }
   dialog h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
   dialog p { margin: 0 0 1rem; font-size: 0.85rem; color: #666; }
+  dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
   dialog button { width: 100%; }
 </style>
