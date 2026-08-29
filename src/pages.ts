@@ -70,12 +70,13 @@ export function renderChatPage(room: string, locale: Locale): string {
 <title>${room}.godot.chat</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; color: #1a1a1a; }
-  header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
-  header .room { flex: 1; }
-  #onlineBtn { font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
-  #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; }
-  #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; }
-  select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; }
+  header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+  header .room { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #onlineBtn { font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; flex-shrink: 0; }
+  #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; flex-shrink: 0; max-width: 8rem; }
+  #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; flex-shrink: 0; }
+  #me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; flex-shrink: 0; }
   .chat-body { position: relative; flex: 1; min-height: 0; }
   #log { position: absolute; inset: 0; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
   .day-sep { align-self: center; font-size: 0.75rem; color: #888; background: #f2f2f2; padding: 0.2em 0.9em; border-radius: 999px; margin: 0.3rem 0; }
@@ -104,7 +105,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   dialog::backdrop { background: rgba(0,0,0,0.4); }
   .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
   .dialog-header h2 { margin: 0; font-size: 1.1rem; }
-  .dialog-close { background: none; border: none; color: #999; cursor: pointer; font-size: 1.3rem; padding: 0; width: auto; line-height: 1; flex-shrink: 0; }
+  .dialog-close { background: none; border: none; color: #999; cursor: pointer; font-size: 1.3rem; padding: 0.5rem; margin: -0.5rem; width: auto; line-height: 1; flex-shrink: 0; }
   dialog p { margin: 0 0 1rem; font-size: 0.85rem; color: #666; }
   dialog form { display: block; padding: 0; border-top: none; }
   dialog input { width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
@@ -114,9 +115,9 @@ export function renderChatPage(room: string, locale: Locale): string {
   #lightbox::backdrop { background: rgba(0,0,0,0.85); }
   #lightbox img { display: block; max-width: 90vw; max-height: 90vh; border-radius: 6px; cursor: zoom-out; }
   .lightbox-close {
-    position: fixed; top: 1rem; right: 1.2rem; z-index: 30; width: auto; height: auto;
+    position: fixed; top: 0.5rem; right: 0.7rem; z-index: 30; width: auto; height: auto;
     background: none; color: #fff; border: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-    font-size: 2rem; line-height: 1; padding: 0; cursor: pointer;
+    font-size: 2rem; line-height: 1; padding: 0.5rem; cursor: pointer;
   }
   #recoverySection { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; font-size: 0.8rem; }
   #recoverySection summary { cursor: pointer; color: #555; }
@@ -138,7 +139,7 @@ export function renderChatPage(room: string, locale: Locale): string {
   }
   .whisper-panel.open { display: flex; }
   .whisper-header { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.85rem; font-weight: 600; }
-  .whisper-header button { background: none; border: none; color: #999; cursor: pointer; font-size: 1.1rem; padding: 0; width: auto; line-height: 1; }
+  .whisper-header button { background: none; border: none; color: #999; cursor: pointer; font-size: 1.1rem; padding: 0.4rem; margin: -0.4rem; width: auto; line-height: 1; }
   #whisperLog { max-height: 12rem; overflow-y: auto; padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; }
   .whisper-msg { padding: 0.4em 0.7em; background: #f2f2f2; border-radius: 8px; align-self: flex-start; max-width: 85%; word-break: break-word; white-space: pre-wrap; }
   .whisper-msg.mine { align-self: flex-end; background: #dbeafe; }
@@ -479,21 +480,39 @@ export function renderChatPage(room: string, locale: Locale): string {
     });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(proto + '//' + location.host + '/ws');
-    showStatus(I18N.chat.connecting);
+    const RECONNECT_BASE_DELAY = 1000;
+    const RECONNECT_MAX_DELAY = 30000;
+    let ws = null;
+    let reconnectDelay = RECONNECT_BASE_DELAY;
+    let reconnectTimer = null;
+    let isJailed = false;
 
     function sendJSON(obj) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
     }
 
-    ws.onopen = () => {
-      showStatus(I18N.chat.connected);
-      sendJSON({ type: 'hello', secret, nickname });
-      if (!nickname) openNickDialog();
-      else textInput.focus();
-    };
-    ws.onclose = () => { showStatus(I18N.chat.disconnected); sendBtn.disabled = true; };
-    ws.onerror = () => { showStatus(I18N.chat.connectionError); };
+    function connect() {
+      ws = new WebSocket(proto + '//' + location.host + '/ws');
+      showStatus(I18N.chat.connecting);
+
+      ws.onopen = () => {
+        reconnectDelay = RECONNECT_BASE_DELAY;
+        showStatus(I18N.chat.connected);
+        sendJSON({ type: 'hello', secret, nickname });
+        if (!nickname) openNickDialog();
+        else textInput.focus();
+      };
+      ws.onclose = () => {
+        sendBtn.disabled = true;
+        if (isJailed) return; // 被封禁的等待时间是按小时算的,重连也没用
+        showStatus(I18N.chat.disconnected);
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_DELAY);
+      };
+      ws.onerror = () => { showStatus(I18N.chat.connectionError); };
+      ws.onmessage = handleServerMessage;
+    }
 
     const dayFormatter = new Intl.DateTimeFormat(LOCALE, { year: 'numeric', month: 'long', day: 'numeric' });
     const timeFormatter = new Intl.DateTimeFormat(LOCALE, { hour: '2-digit', minute: '2-digit' });
@@ -593,7 +612,7 @@ export function renderChatPage(room: string, locale: Locale): string {
       }
     });
 
-    ws.onmessage = (event) => {
+    function handleServerMessage(event) {
       const data = JSON.parse(event.data);
 
       if (data.type === 'identity') {
@@ -613,7 +632,12 @@ export function renderChatPage(room: string, locale: Locale): string {
       }
 
       if (data.type === 'error') {
-        showStatus(I18N.chat.errors[data.code] || data.code);
+        if (data.code === 'jailed') {
+          isJailed = true;
+          showStatus(I18N.chat.errors.jailed, 0); // 一直显示,不像别的提示那样自动消失
+        } else {
+          showStatus(I18N.chat.errors[data.code] || data.code);
+        }
         return;
       }
 
@@ -640,8 +664,14 @@ export function renderChatPage(room: string, locale: Locale): string {
       }
 
       if (data.type === 'history') {
+        // 重连之后服务器会重新推一份历史快照——把上一次连接留下的内容清空再重建,
+        // 不然这批消息会跟断线前已经渲染好的重复一遍
+        log.innerHTML = '';
+        lastDayKey = null;
+        firstDayKey = null;
+        loadingHistory = false;
         appendMessages(data.messages);
-        if (data.messages.length) oldestSeq = data.messages[0].seq;
+        oldestSeq = data.messages.length ? data.messages[0].seq : null;
         hasMoreHistory = data.hasMore;
         log.scrollTop = log.scrollHeight;
         return;
@@ -662,7 +692,9 @@ export function renderChatPage(room: string, locale: Locale): string {
         appendMessages([data]);
         if (wasNearBottom) log.scrollTop = log.scrollHeight;
       }
-    };
+    }
+
+    connect();
 
     nickForm.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -681,9 +713,11 @@ export function renderChatPage(room: string, locale: Locale): string {
     }
     textInput.addEventListener('input', resizeTextInput);
 
-    // 回车发送,Shift+回车换行(textarea 默认不会自动提交表单,换行是原生行为不用特殊处理)
+    // 回车发送,Shift+回车换行(textarea 默认不会自动提交表单,换行是原生行为不用特殊处理)。
+    // e.isComposing 排除中日韩输入法组词期间按回车确认候选字的情况,不然打拼音/假名
+    // 按回车选字会被当成发送
     textInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         sendForm.requestSubmit();
       }
