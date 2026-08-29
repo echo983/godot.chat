@@ -53,7 +53,7 @@ const MESSAGES: Record<Locale, Messages> = {
     landing: {
       intro:
         "Every subdomain is its own chat room, created automatically the moment you visit. Try newyork.godot.chat or apple.godot.chat.",
-      roomPlaceholder: "Room name (1-12 lowercase letters/digits/-)",
+      roomPlaceholder: "Room name (1-12 letters/digits/-, CJK ok)",
       enterButton: "Enter",
     },
     chat: {
@@ -92,7 +92,7 @@ const MESSAGES: Record<Locale, Messages> = {
     landing: {
       intro:
         "Cada subdominio es su propia sala de chat, creada automáticamente al entrar. Prueba newyork.godot.chat o apple.godot.chat.",
-      roomPlaceholder: "Nombre de sala (1-12 letras minúsculas/dígitos/-)",
+      roomPlaceholder: "Nombre de sala (1-12 letras/dígitos/-, CJK también)",
       enterButton: "Entrar",
     },
     chat: {
@@ -130,7 +130,7 @@ const MESSAGES: Record<Locale, Messages> = {
   "zh-Hans": {
     landing: {
       intro: "任意子域名都是一个独立聊天室,进去就自动创建。例如 newyork.godot.chat、apple.godot.chat。",
-      roomPlaceholder: "房间名 (1-12 位小写字母/数字/-)",
+      roomPlaceholder: "房间名 (1-12 位字母/数字/汉字/-)",
       enterButton: "进入",
     },
     chat: {
@@ -167,7 +167,7 @@ const MESSAGES: Record<Locale, Messages> = {
   "zh-Hant": {
     landing: {
       intro: "任意子網域都是一個獨立聊天室,進去就自動建立。例如 newyork.godot.chat、apple.godot.chat。",
-      roomPlaceholder: "房間名 (1-12 位小寫字母/數字/-)",
+      roomPlaceholder: "房間名 (1-12 位字母/數字/漢字/-)",
       enterButton: "進入",
     },
     chat: {
