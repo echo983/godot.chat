@@ -11,6 +11,14 @@ const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_MAX_MESSAGES = 20;
 const MAX_VIOLATIONS = 5;
 
+// 同一身份(hashId)两条消息之间的硬冷却,按身份记在存储里,换个连接也躲不掉
+const MESSAGE_COOLDOWN_MS = 5_000;
+
+// 同一 IP 在这个窗口内出现超过这么多个不同身份,就封禁这个 IP(仅本房间)
+const IDENTITY_SWITCH_WINDOW_MS = 10 * 60 * 1000;
+const IDENTITY_SWITCH_THRESHOLD = 10;
+const JAIL_DURATION_MS = 4 * 60 * 60 * 1000;
+
 // 每个房间只保留最近这么多条——先兜住存储量,不是最终的结晶/结石分类机制
 const MAX_STORED_MESSAGES = 1000;
 // 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
@@ -85,6 +93,9 @@ async function computeHashId(secret: string): Promise<string> {
  * - 违规次数达到上限则断开连接
  * - 单房间并发连接数上限,单 IP 并发连接数上限
  * - 未设置合法昵称前不能发言(chat 类型会被拒绝)
+ * - 同一身份(hashId)发言硬冷却 MESSAGE_COOLDOWN_MS,按身份存储,换连接躲不掉
+ * - 同一 IP 在 IDENTITY_SWITCH_WINDOW_MS 内切换身份超过 IDENTITY_SWITCH_THRESHOLD 次,
+ *   封禁这个 IP(仅本房间)JAIL_DURATION_MS
  */
 export class ChatRoom extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -114,6 +125,85 @@ export class ChatRoom extends DurableObject<Env> {
     if (!cols.includes("hash_id")) {
       this.ctx.storage.sql.exec("ALTER TABLE messages ADD COLUMN hash_id TEXT NOT NULL DEFAULT ''");
     }
+
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS identities (
+        hash_id TEXT PRIMARY KEY,
+        last_message_ts INTEGER NOT NULL DEFAULT 0
+      )`,
+    );
+
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS identity_sightings (
+        ip TEXT NOT NULL,
+        hash_id TEXT NOT NULL,
+        first_seen_ts INTEGER NOT NULL,
+        PRIMARY KEY (ip, hash_id)
+      )`,
+    );
+
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS ip_jail (
+        ip TEXT PRIMARY KEY,
+        jailed_until INTEGER NOT NULL
+      )`,
+    );
+  }
+
+  private isJailed(ip: string, now: number): boolean {
+    const row = [
+      ...this.ctx.storage.sql.exec<{ jailedUntil: number }>(
+        "SELECT jailed_until AS jailedUntil FROM ip_jail WHERE ip = ?",
+        ip,
+      ),
+    ][0];
+    return !!row && row.jailedUntil > now;
+  }
+
+  /**
+   * 记录一次"这个 IP 用了这个 hashId"。同一 (ip, hashId) 组合只算一次,
+   * 重连/重复 hello 不算换身份。超过窗口期内的换身份次数阈值就封禁这个 IP,
+   * 并立刻踢掉它在本房间里所有还开着的连接。返回 true 表示这个 IP 现在被封了。
+   */
+  private registerIdentitySwitch(ip: string, hashId: string, now: number): boolean {
+    if (this.isJailed(ip, now)) return true;
+
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO identity_sightings (ip, hash_id, first_seen_ts) VALUES (?, ?, ?)",
+      ip,
+      hashId,
+      now,
+    );
+
+    const windowStart = now - IDENTITY_SWITCH_WINDOW_MS;
+    this.ctx.storage.sql.exec("DELETE FROM identity_sightings WHERE first_seen_ts < ?", windowStart);
+
+    const countRow = [
+      ...this.ctx.storage.sql.exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM identity_sightings WHERE ip = ?",
+        ip,
+      ),
+    ][0];
+
+    if (!countRow || countRow.n <= IDENTITY_SWITCH_THRESHOLD) {
+      return false;
+    }
+
+    const jailedUntil = now + JAIL_DURATION_MS;
+    this.ctx.storage.sql.exec(
+      `INSERT INTO ip_jail (ip, jailed_until) VALUES (?, ?)
+       ON CONFLICT(ip) DO UPDATE SET jailed_until = excluded.jailed_until`,
+      ip,
+      jailedUntil,
+    );
+
+    for (const socket of this.ctx.getWebSockets()) {
+      if (readState(socket)?.ip !== ip) continue;
+      socket.send(JSON.stringify({ type: "error", code: "jailed" }));
+      socket.close(1008, "too many identity switches");
+    }
+
+    return true;
   }
 
   /**
@@ -147,12 +237,18 @@ export class ChatRoom extends DurableObject<Env> {
       return new Response("Expected websocket", { status: 426 });
     }
 
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    if (this.isJailed(ip, Date.now())) {
+      return new Response("Too many identity switches from this address — try again later", {
+        status: 429,
+      });
+    }
+
     const sockets = this.ctx.getWebSockets();
     if (sockets.length >= MAX_CONNECTIONS_PER_ROOM) {
       return new Response("Room is full", { status: 503 });
     }
 
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     const sameIpCount = sockets.filter((s) => readState(s)?.ip === ip).length;
     if (sameIpCount >= MAX_CONNECTIONS_PER_IP) {
       return new Response("Too many connections from this address", { status: 429 });
@@ -191,6 +287,13 @@ export class ChatRoom extends DurableObject<Env> {
     }
 
     const now = Date.now();
+
+    if (this.isJailed(state.ip, now)) {
+      ws.send(JSON.stringify({ type: "error", code: "jailed" }));
+      ws.close(1008, "too many identity switches");
+      return;
+    }
+
     if (now - state.windowStart > RATE_LIMIT_WINDOW_MS) {
       state.windowStart = now;
       state.windowCount = 0;
@@ -224,7 +327,12 @@ export class ChatRoom extends DurableObject<Env> {
           this.flagViolation(ws, state, "missing secret");
           return;
         }
-        state.hashId = await computeHashId(secret);
+        const hashId = await computeHashId(secret);
+        if (this.registerIdentitySwitch(state.ip, hashId, now)) {
+          // 已经在 registerIdentitySwitch 里把这个 IP 的连接都关了,这里不用再处理
+          return;
+        }
+        state.hashId = hashId;
         const nickname = normalizeNickname(msg.nickname);
         if (nickname) state.nickname = nickname;
         writeState(ws, state);
@@ -269,6 +377,17 @@ export class ChatRoom extends DurableObject<Env> {
         const trimmed = cleaned.trim();
         if (!trimmed) return;
 
+        const cooldownRow = [
+          ...this.ctx.storage.sql.exec<{ lastTs: number }>(
+            "SELECT last_message_ts AS lastTs FROM identities WHERE hash_id = ?",
+            state.hashId,
+          ),
+        ][0];
+        if (cooldownRow && now - cooldownRow.lastTs < MESSAGE_COOLDOWN_MS) {
+          ws.send(JSON.stringify({ type: "error", code: "cooldown" }));
+          return;
+        }
+
         const payload: StoredMessage = {
           id: crypto.randomUUID(),
           text: trimmed,
@@ -290,6 +409,12 @@ export class ChatRoom extends DurableObject<Env> {
              SELECT seq FROM messages ORDER BY seq DESC LIMIT ?
            )`,
           MAX_STORED_MESSAGES,
+        );
+        this.ctx.storage.sql.exec(
+          `INSERT INTO identities (hash_id, last_message_ts) VALUES (?, ?)
+           ON CONFLICT(hash_id) DO UPDATE SET last_message_ts = excluded.last_message_ts`,
+          payload.hashId,
+          payload.ts,
         );
 
         const encoded = JSON.stringify({ type: "message", ...payload });

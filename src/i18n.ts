@@ -34,6 +34,8 @@ export interface Messages {
     errors: {
       nickname_invalid: string;
       nickname_required: string;
+      cooldown: string;
+      jailed: string;
     };
   };
 }
@@ -64,6 +66,8 @@ const MESSAGES: Record<Locale, Messages> = {
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
+        cooldown: "You're sending messages too fast — wait a few seconds",
+        jailed: "Too many identity switches from this connection — blocked for a while",
       },
     },
   },
@@ -92,6 +96,8 @@ const MESSAGES: Record<Locale, Messages> = {
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
+        cooldown: "Estás enviando mensajes demasiado rápido — espera unos segundos",
+        jailed: "Demasiados cambios de identidad desde esta conexión — bloqueado por un tiempo",
       },
     },
   },
@@ -118,6 +124,8 @@ const MESSAGES: Record<Locale, Messages> = {
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
+        cooldown: "发言太快了,歇几秒再说",
+        jailed: "短时间内切换身份太多次,已被暂时限制",
       },
     },
   },
@@ -144,6 +152,8 @@ const MESSAGES: Record<Locale, Messages> = {
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
+        cooldown: "發言太快了,歇幾秒再說",
+        jailed: "短時間內切換身分太多次,已被暫時限制",
       },
     },
   },
