@@ -30,6 +30,9 @@ const MAX_STORED_MESSAGES = 1000;
 // 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
 const PAGE_SIZE = 50;
 
+// "查看原文"取帖子析出区间的安全阀,正常帖子的区间远远到不了这个量级
+const MAX_JUMP_RANGE = 500;
+
 // LLM 析出帖子:攒够这么多字节的新消息文本才考虑再分析一次(按条数算在活跃房间
 // 里太频繁——短消息刷屏几秒就能攒够10条,按字节数更接近"攒够了值得分析的内容量"),
 // 攒够之后再等这么久(debounce)才真正触发——避免一波连续聊天触发很多次分析,
@@ -342,6 +345,38 @@ export class ChatRoom extends DurableObject<Env> {
     return { messages, hasMore };
   }
 
+  /**
+   * 帖子"查看原文"用:取 [from, to] 这个原始消息区间。跟 fetchHistoryPage 不同,
+   * 这里不按固定页大小截断——帖子析出的区间本身就是完整的一段讨论,截断了等于
+   * 白链接;LIMIT 只是防误用/防恶意构造超大区间的安全阀,正常帖子远远到不了这个量级。
+   * 如果 from 已经早于当前保留窗口最早的消息(被滚动淘汰了),或者区间内根本查
+   * 不到消息(比如 from 超过了当前最大 seq——正常链接不会这样,只有手改 URL 才会),
+   * available 都是 false。
+   */
+  private fetchHistoryRange(from: number, to: number): { available: boolean; messages: HistoryRow[]; hasEarlier: boolean } {
+    const minRow = [...this.ctx.storage.sql.exec<{ minSeq: number | null }>("SELECT MIN(seq) AS minSeq FROM messages")][0];
+    const minSeq = minRow?.minSeq ?? null;
+
+    if (minSeq === null || from < minSeq) {
+      return { available: false, messages: [], hasEarlier: false };
+    }
+
+    const messages = [
+      ...this.ctx.storage.sql.exec<HistoryRow>(
+        "SELECT seq, id, text, ts, nickname, hash_id AS hashId FROM messages WHERE seq >= ? AND seq <= ? ORDER BY seq ASC LIMIT ?",
+        from,
+        to,
+        MAX_JUMP_RANGE,
+      ),
+    ];
+
+    if (messages.length === 0) {
+      return { available: false, messages: [], hasEarlier: false };
+    }
+
+    return { available: true, messages, hasEarlier: from > minSeq };
+  }
+
   async listPosts(): Promise<PostSummary[]> {
     const rows = [
       ...this.ctx.storage.sql.exec<PostRow>(
@@ -613,6 +648,26 @@ export class ChatRoom extends DurableObject<Env> {
         writeState(ws, state);
         const { messages, hasMore } = this.fetchHistoryPage(before);
         ws.send(JSON.stringify({ type: "history_before", messages, hasMore }));
+        return;
+      }
+
+      case "jump_to": {
+        const from = msg.from;
+        const to = msg.to;
+        if (
+          typeof from !== "number" ||
+          typeof to !== "number" ||
+          !Number.isInteger(from) ||
+          !Number.isInteger(to) ||
+          from < 1 ||
+          to < from
+        ) {
+          this.flagViolation(ws, state, "invalid jump range");
+          return;
+        }
+        writeState(ws, state);
+        const { available, messages, hasEarlier } = this.fetchHistoryRange(from, to);
+        ws.send(JSON.stringify({ type: "jump_to", available, from, messages, hasMore: hasEarlier }));
         return;
       }
 
