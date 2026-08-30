@@ -1,6 +1,6 @@
-# 析出层 Phase 2：投票、分类与代谢（设计稿，尚未实现）
+# 析出层 Phase 2：投票、分类与代谢（设计稿，已实现于 v0.23.0，见 README.md）
 
-Phase 1（LLM 抽取 + 存储 + 展示，含"查看原文"永久快照）已经完成并上线，见 [README.md](../README.md) 的"析出层（Phase 1）"一节。这份文档是 Phase 2 的设计——投票、分类、生命周期/代谢——在实现之前先落盘，供实现时对照，也供以后回头查当初为什么这么设计。
+Phase 1（LLM 抽取 + 存储 + 展示，含"查看原文"永久快照）已经完成并上线。这份文档是 Phase 2 的设计——投票、分类、生命周期/代谢——实现前先落盘,供实现时对照。**当前实际行为以 [README.md](../README.md) 的"析出层（Phase 1 + Phase 2）"一节为准**,这份文档保留作为"当初为什么这么设计"的历史记录,不再随实现变化更新。
 
 对应 [构想摘要.md](构想摘要.md) 里"结晶/结石/矿渣/化石"四分类的原始设想。这份设计**简化成了二元判断（Good / 不是 Good）**，原因见下文"为什么不是四分类"。
 
@@ -63,14 +63,15 @@ CREATE TABLE IF NOT EXISTS post_votes (
 **周期**：固定一周一次，`wrangler.jsonc` 加 Cron Trigger：
 
 ```jsonc
-"triggers": { "crons": ["0 0 * * 0"] }  // 每周日 00:00 UTC
+"triggers": { "crons": ["0 0 * * SUN"] }  // 每周日 00:00 UTC(Cloudflare 不接受数字 0 代表周日,实测踩过一次)
 ```
 
 **执行方式**：中心 cron 只做分发，不做重活；真正的清算逻辑分散在各房间自己的 DO 里跑，避免重蹈 `RoomRegistry` 曾经当过全站唯一瓶颈的覆辙。
 
 ```
 scheduled() [index.ts]
-  → RoomRegistry.listAllRoomNames()   // 新增 RPC，读 known_rooms 表（已存在，不用新建）
+  → RoomRegistry.listRoomsForGc(now)   // 新增 RPC，读 known_rooms 表（已存在，不用新建），
+                                        // 用 created_ts 过滤掉创建不满一个周期的房间
   → 对每个房间名：
       ChatRoom(room).runWeeklyGc()    // 新增 RPC，各房间自己算、自己删
 ```

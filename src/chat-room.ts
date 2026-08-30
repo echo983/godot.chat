@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 import { createWorkersAiClient } from "./llm";
+import { isGoodPost, isInGracePeriod } from "./gc-time";
 
 const MAX_MESSAGE_LENGTH = 2000;
 // Cloudflare Workers 平台本身允许单条 WebSocket 消息最大到 32 MiB——远超任何
@@ -9,7 +10,7 @@ const MAX_MESSAGE_LENGTH = 2000;
 // 几十 MB 的字符串处理成本才轮到后面的长度校验
 const MAX_RAW_MESSAGE_BYTES = 8192;
 const MAX_NICKNAME_LENGTH = 20;
-const MAX_SECRET_LENGTH = 128;
+export const MAX_SECRET_LENGTH = 128;
 const HASH_ID_LENGTH = 16; // hex chars kept server-side; UI only shows the last 4
 const MAX_CONNECTIONS_PER_ROOM = 200;
 const MAX_CONNECTIONS_PER_IP = 8;
@@ -74,6 +75,8 @@ export interface PostSummary {
   toSeq: number;
   createdTs: number;
   sourceMessages: PostSourceMessage[];
+  goodCount: number;
+  badCount: number;
 }
 
 interface PostRow {
@@ -85,7 +88,16 @@ interface PostRow {
   toSeq: number;
   createdTs: number;
   sourceMessages: string;
+  goodCount: number;
+  badCount: number;
   [key: string]: SqlStorageValue;
+}
+
+export interface CastVoteResult {
+  myVote: "good" | "bad";
+  goodCount: number;
+  badCount: number;
+  netScore: number;
 }
 
 interface ConnState {
@@ -133,7 +145,7 @@ function normalizeNickname(input: unknown): string | null {
  * 否则任何人复制别人消息里公开的 hash 字符串就能冒充。secret 只在这条已加密的
  * WebSocket 连接上传一次,从不出现在广播消息里,别人拿不到也就算不出同样的 hash。
  */
-async function computeHashId(secret: string): Promise<string> {
+export async function computeHashId(secret: string): Promise<string> {
   const bytes = new TextEncoder().encode(secret);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -235,6 +247,16 @@ export class ChatRoom extends DurableObject<Env> {
     if (!postCols.includes("source_messages")) {
       this.ctx.storage.sql.exec("ALTER TABLE posts ADD COLUMN source_messages TEXT NOT NULL DEFAULT '[]'");
     }
+
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS post_votes (
+        post_id TEXT NOT NULL,
+        hash_id TEXT NOT NULL,
+        vote TEXT NOT NULL CHECK (vote IN ('good', 'bad')),
+        updated_ts INTEGER NOT NULL,
+        PRIMARY KEY (post_id, hash_id)
+      )`,
+    );
   }
 
   private isJailed(ip: string, now: number): boolean {
@@ -363,8 +385,15 @@ export class ChatRoom extends DurableObject<Env> {
   async listPosts(): Promise<PostSummary[]> {
     const rows = [
       ...this.ctx.storage.sql.exec<PostRow>(
-        "SELECT id, title, summary, key_points AS keyPoints, from_seq AS fromSeq, to_seq AS toSeq, " +
-          "created_ts AS createdTs, source_messages AS sourceMessages FROM posts ORDER BY created_ts DESC",
+        `SELECT p.id AS id, p.title AS title, p.summary AS summary, p.key_points AS keyPoints,
+                p.from_seq AS fromSeq, p.to_seq AS toSeq, p.created_ts AS createdTs,
+                p.source_messages AS sourceMessages,
+                COALESCE(SUM(CASE WHEN pv.vote = 'good' THEN 1 ELSE 0 END), 0) AS goodCount,
+                COALESCE(SUM(CASE WHEN pv.vote = 'bad' THEN 1 ELSE 0 END), 0) AS badCount
+         FROM posts p
+         LEFT JOIN post_votes pv ON pv.post_id = p.id
+         GROUP BY p.id
+         ORDER BY p.created_ts DESC`,
       ),
     ];
     return rows.map((r) => ({
@@ -379,6 +408,73 @@ export class ChatRoom extends DurableObject<Env> {
   async countPosts(): Promise<number> {
     const row = [...this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM posts")][0];
     return row?.n ?? 0;
+  }
+
+  private tallyVotes(postId: string): { good: number; bad: number } {
+    const row = [
+      ...this.ctx.storage.sql.exec<{ good: number; bad: number }>(
+        `SELECT COALESCE(SUM(CASE WHEN vote = 'good' THEN 1 ELSE 0 END), 0) AS good,
+                COALESCE(SUM(CASE WHEN vote = 'bad' THEN 1 ELSE 0 END), 0) AS bad
+         FROM post_votes WHERE post_id = ?`,
+        postId,
+      ),
+    ][0];
+    return { good: row?.good ?? 0, bad: row?.bad ?? 0 };
+  }
+
+  /**
+   * 投票,允许改主意(upsert,不是"投过就锁死")。不做撤回——只能在好/坏之间切换。
+   * 返回最新票数供前端原地更新,不用整页刷新。帖子不存在(比如刚被 GC 清理掉)
+   * 返回 null。
+   */
+  async castVote(postId: string, hashId: string, vote: "good" | "bad"): Promise<CastVoteResult | null> {
+    if (vote !== "good" && vote !== "bad") return null;
+
+    const post = [
+      ...this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM posts WHERE id = ?", postId),
+    ][0];
+    if (!post) return null;
+
+    this.ctx.storage.sql.exec(
+      `INSERT INTO post_votes (post_id, hash_id, vote, updated_ts) VALUES (?, ?, ?, ?)
+       ON CONFLICT(post_id, hash_id) DO UPDATE SET vote = excluded.vote, updated_ts = excluded.updated_ts`,
+      postId,
+      hashId,
+      vote,
+      Date.now(),
+    );
+
+    const { good, bad } = this.tallyVotes(postId);
+    return { myVote: vote, goodCount: good, badCount: bad, netScore: good - bad };
+  }
+
+  /**
+   * 每周固定 GC:跳过还在观察期的帖子(至少给一整个周期被看到、被投票的机会),
+   * 其余的按净票数判定,不是 Good 就硬删——帖子本身和它的投票记录一起删,
+   * 不留痕迹。由 index.ts 的 Cron Trigger 触发,不占用这个 DO 已经被
+   * 析出 debounce 用掉的 alarm() 槽位。
+   */
+  async runWeeklyGc(): Promise<{ deletedCount: number }> {
+    const now = Date.now();
+    const rows = [
+      ...this.ctx.storage.sql.exec<{ id: string; createdTs: number }>(
+        "SELECT id, created_ts AS createdTs FROM posts",
+      ),
+    ];
+
+    let deletedCount = 0;
+    for (const row of rows) {
+      if (isInGracePeriod(row.createdTs, now)) continue;
+
+      const { good, bad } = this.tallyVotes(row.id);
+      if (!isGoodPost(good, bad)) {
+        this.ctx.storage.sql.exec("DELETE FROM posts WHERE id = ?", row.id);
+        this.ctx.storage.sql.exec("DELETE FROM post_votes WHERE post_id = ?", row.id);
+        deletedCount++;
+      }
+    }
+
+    return { deletedCount };
   }
 
   async fetch(request: Request): Promise<Response> {

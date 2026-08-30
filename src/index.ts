@@ -3,7 +3,7 @@ import { renderChatPage, renderLandingPage, renderPostsPage } from "./pages";
 import { resolveLocale } from "./i18n";
 import { readBodyCapped } from "./body-utils";
 import { createRateLimiter } from "./rate-limit";
-import { ChatRoom } from "./chat-room";
+import { ChatRoom, computeHashId, MAX_SECRET_LENGTH } from "./chat-room";
 import { RoomRegistry } from "./room-registry";
 
 export { ChatRoom, RoomRegistry };
@@ -29,6 +29,8 @@ const HTML_HEADERS = {
 };
 
 const CLIENT_ERROR_MAX_BYTES = 4096;
+const VOTE_MAX_BYTES = 256;
+const VOTE_PATH_RE = /^\/posts\/([^/]+)\/vote$/;
 
 const isClientErrorRateLimited = createRateLimiter({ windowMs: 60_000, max: 5, maxTrackedKeys: 5000 });
 
@@ -62,6 +64,86 @@ async function handleClientError(request: Request, host: string, ip: string): Pr
   console.error("[client-error]", host, body);
 
   return new Response(null, { status: 204 });
+}
+
+/**
+ * 帖子投票——好/坏都行,允许改主意(castVote 是 upsert),不做撤回。走普通
+ * POST 而不是 WS:帖子页本来就没有 WS 连接,为了这一个低频动作专门起一条
+ * WS 连接不划算。身份复用聊天室那套 secret→hashId 机制,不是另起一套。
+ */
+async function handleVote(
+  request: Request,
+  env: Env,
+  host: string,
+  room: string,
+  postId: string,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // 跟 /ws 一样只做同源软防护
+  const origin = request.headers.get("Origin");
+  if (origin !== null && origin !== `https://${host}`) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const body = await readBodyCapped(request, VOTE_MAX_BYTES);
+  if (body === null) {
+    return new Response("Payload too large", { status: 413 });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const secret = typeof obj.secret === "string" ? obj.secret.slice(0, MAX_SECRET_LENGTH) : "";
+  const vote = obj.vote;
+  if (!secret || (vote !== "good" && vote !== "bad")) {
+    return new Response("Invalid vote", { status: 400 });
+  }
+
+  const hashId = await computeHashId(secret);
+  const stub = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName(room));
+  const result = await stub.castVote(postId, hashId, vote);
+
+  if (!result) {
+    return new Response("Post not found", { status: 404 });
+  }
+
+  return new Response(JSON.stringify(result), {
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/**
+ * 每周固定 GC 的分发入口:从 RoomRegistry 拿"值得唤醒去检查"的房间名(已经按
+ * 创建时间过滤掉了不可能有帖子出观察期的太新房间,见 RoomRegistry.listRoomsForGc),
+ * 逐个房间发 RPC 触发各自的 runWeeklyGc()。这里只做分发,真正的清算在各房间
+ * 自己的 DO 里跑,避免重蹈 RoomRegistry 曾经当过全站唯一瓶颈的覆辙。单个房间
+ * 失败不中断整体扫描。
+ */
+async function runWeeklyGcSweep(env: Env): Promise<void> {
+  const registry = env.ROOM_REGISTRY.get(env.ROOM_REGISTRY.idFromName("global"));
+  const rooms = await registry.listRoomsForGc(Date.now());
+  console.log(`[gc] weekly sweep starting for ${rooms.length} rooms`);
+
+  let totalDeleted = 0;
+  for (const room of rooms) {
+    try {
+      const stub = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName(room));
+      const { deletedCount } = await stub.runWeeklyGc();
+      totalDeleted += deletedCount;
+    } catch (err) {
+      console.error(`[gc] room "${room}" failed`, err);
+    }
+  }
+
+  console.log(`[gc] weekly sweep done: ${rooms.length} rooms, ${totalDeleted} posts deleted`);
 }
 
 function handleRobotsTxt(host: string, rootDomain: string): Response {
@@ -144,6 +226,11 @@ export default {
       return stub.fetch(request);
     }
 
+    const voteMatch = VOTE_PATH_RE.exec(url.pathname);
+    if (voteMatch) {
+      return handleVote(request, env, host, room, voteMatch[1]);
+    }
+
     if (request.method !== "GET") {
       return new Response("Method not allowed", { status: 405 });
     }
@@ -159,5 +246,9 @@ export default {
     const chatRoomStub = env.CHAT_ROOM.get(chatRoomId);
     const postsCount = await chatRoomStub.countPosts();
     return new Response(renderChatPage(room, locale, rootDomain, postsCount), { headers: HTML_HEADERS });
+  },
+
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runWeeklyGcSweep(env));
   },
 } satisfies ExportedHandler<Env>;

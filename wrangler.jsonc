@@ -11,6 +11,9 @@
   "ai": {
     "binding": "AI"
   },
+  "triggers": {
+    "crons": ["0 0 * * SUN"]
+  },
   "routes": [
     { "pattern": "godot.chat/*", "zone_name": "godot.chat" },
     { "pattern": "*.godot.chat/*", "zone_name": "godot.chat" }

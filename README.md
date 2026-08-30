@@ -1,6 +1,6 @@
 # godot.chat
 
-任意 `*.godot.chat` 子域名都是一个独立聊天室,访问即自动创建,不需要注册、不需要事先申请。这是产品构想([`docs/构想摘要.md`](docs/构想摘要.md))里"会代谢的聊天室"的**第一层**——实时聊天这个原始层,已经完成。**第二层**("析出层")目前完成了 Phase 1:LLM 从聊天中自动析出帖子并展示(`/posts` 页面),还没有投票、结晶/结石/矿渣/化石分类、生命周期管理——见下文"析出层(Phase 1)"。
+任意 `*.godot.chat` 子域名都是一个独立聊天室,访问即自动创建,不需要注册、不需要事先申请。这是产品构想([`docs/构想摘要.md`](docs/构想摘要.md))里"会代谢的聊天室"的**第一层**——实时聊天这个原始层,已经完成。**第二层**("析出层")目前完成了 Phase 1(LLM 从聊天中自动析出帖子并展示)和 Phase 2(社区投票 + 每周固定 GC 代谢)——见下文"析出层(Phase 1 + Phase 2)"。
 
 线上地址:[godot.chat](https://godot.chat)
 
@@ -13,7 +13,7 @@
 - 在线列表、私聊(悄悄话)
 - 简体中文/繁体中文/English/Español 四语言界面,根据浏览器语言自动切换,也可手动选择
 - 一整套针对匿名公共聊天室的防滥用机制(见下文"防滥用/资源保护""设计取舍")
-- 每个房间的聊天会被 LLM(Cloudflare Workers AI)自动分析,形成明确主题的讨论会被析出成"帖子",在 `/posts` 页面展示(见下文"析出层(Phase 1)")
+- 每个房间的聊天会被 LLM(Cloudflare Workers AI)自动分析,形成明确主题的讨论会被析出成"帖子",在 `/posts` 页面展示,支持社区投票和每周固定 GC 代谢(见下文"析出层(Phase 1 + Phase 2)")
 
 ## 架构
 
@@ -99,9 +99,9 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 `test/` 目录下按测试目标分两类:
 
-- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`、`body-utils.test.mjs`、`rate-limit.test.mjs`、`llm.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。`body-utils.ts`/`rate-limit.ts` 特意从 `index.ts` 拆出来单独成文件,`llm.ts` 的 `parseExtraction` 单独导出,都是为了能被这样直接测——`index.ts` 本身因为顶部 import 了依赖 `cloudflare:workers` 的 `chat-room.ts`/`room-registry.ts`,没法在 Node 里加载。
+- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`、`body-utils.test.mjs`、`rate-limit.test.mjs`、`llm.test.mjs`、`gc-time.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。`body-utils.ts`/`rate-limit.ts` 特意从 `index.ts` 拆出来单独成文件,`llm.ts` 的 `parseExtraction` 单独导出,`gc-time.ts` 整个模块都是为了能被这样直接测而单独抽出来的——`index.ts` 本身因为顶部 import 了依赖 `cloudflare:workers` 的 `chat-room.ts`/`room-registry.ts`,没法在 Node 里加载。
 - **复刻逻辑**的(`identity-hash`、`control-chars`、`day-grouping`、`cooldown-jail`、`room-registry`、`presence`、`media-embed`、`message-size`、`safe-broadcast`):`chat-room.ts` 和 `room-registry.ts` 是 Durable Object,依赖 `this.ctx.storage.sql`、`crypto.subtle`、Hibernatable WebSocket 这些 Workers 专属 API,没法在普通 Node 里直接跑;`pages.ts` 里的客户端逻辑活在拼 HTML 字符串的模板字面量里,也没法作为模块直接 import。这些测试文件顶部都有注释说明——**改了对应的真实实现,要记得手动同步改测试**,它们不会自动帮你发现代码漂移。
-- **复刻 SQL,真实引擎跑**的(`posts-schema.test.mjs`):跟上面"复刻逻辑"类似没法直接 import,但这份测试没有用 JS 数据结构模拟数据库,而是用 Node 22+ 自带的 `node:sqlite`(`DatabaseSync`)起一个真实的内存 SQLite,把 `chat-room.ts` 里 `posts` 表的建表/迁移 SQL 原样复制过来跑一遍——专门测 `ALTER TABLE ADD COLUMN` 这类"新房间直接建表带新字段、旧房间靠 `PRAGMA table_info` 探测后补" 的迁移逻辑,这种东西手写 JS mock 测不出真实 SQL 语法/迁移行为对不对。
+- **复刻 SQL,真实引擎跑**的(`posts-schema.test.mjs`、`post-votes-schema.test.mjs`):跟上面"复刻逻辑"类似没法直接 import,但这份测试没有用 JS 数据结构模拟数据库,而是用 Node 22+ 自带的 `node:sqlite`(`DatabaseSync`)起一个真实的内存 SQLite,把 `chat-room.ts` 里对应表的建表/迁移/查询 SQL 原样复制过来跑一遍——`posts-schema.test.mjs` 专测 `ALTER TABLE ADD COLUMN` 这类"新房间直接建表带新字段、旧房间靠 `PRAGMA table_info` 探测后补"的迁移逻辑,`post-votes-schema.test.mjs` 专测投票 upsert 语义(改票不是新增)和每周 GC 的判定/删除 SQL(观察期跳过、净分数判定、帖子和投票记录一起删),这种东西手写 JS mock 测不出真实 SQL 语法/行为对不对。
 
 `scripts/render-and-check.mjs`(即 `npm run check:pages`)是另一类校验:用 esbuild 真实打包 `pages.ts`,调用真实的 `renderChatPage`/`renderLandingPage`,对产出的每个 `<script>` 块做语法解析。这是专门为了防一类曾经真实上线过的 bug——`pages.ts` 把前端 JS 写在 TypeScript 模板字符串里,`\/`、`\s`、`\.`、`\]` 这类反斜杠转义会被外层模板字符串自己先吃掉一层,直接写在字符串里的正则表达式很容易被静默改坏,只对 `${...}` 占位符做替换的语法检查测不出这个问题,必须走真实渲染。
 
@@ -143,9 +143,9 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 - **私聊(悄悄话)不落盘**,纯实时中继,断线/离线就收不到,没有离线补发。公开聊天消息滚动保留最近 1000 条则是落盘的。
 - **防滥用全部是自动化规则**(消息频率限制、同身份发言冷却、换身份限流封禁、新建房间限流),**没有人工举报/禁言机制**——这是已知的、刻意先不做的缺口,不是忘了。
 
-## 析出层(Phase 1)
+## 析出层(Phase 1 + Phase 2)
 
-构想里的"第二层"分三个阶段实现,当前只做完了 Phase 1——LLM 抽取 + 存储 + 展示,还没有投票、分类、生命周期管理。
+构想里的"第二层"分阶段实现。Phase 1 是 LLM 抽取 + 存储 + 展示;Phase 2 是社区投票 + 每周固定 GC 代谢。完整设计过程记录在 [`docs/析出层-Phase2-投票与代谢设计.md`](docs/析出层-Phase2-投票与代谢设计.md),这里只记当前实际行为。
 
 - **触发机制**:每个 `ChatRoom` 自己用 Durable Object Alarm 决定什么时候分析,不是全站定时扫描的中心化方案(吸取了 `RoomRegistry` 曾经当过全站唯一瓶颈的教训)。每条新的公开聊天消息(私聊不算,私聊本身就不落盘)都会检查:距上次分析以来新消息文本的总字节数是否≥10KB(`EXTRACTION_MIN_NEW_BYTES`,按字节而不是按条数,是因为活跃房间刷屏几秒就能攒够10条短消息,按字节数更接近"攒够了值得分析的内容量"),够了、且当前没有排队中的 alarm,就订一个 2 分钟后的 alarm(`EXTRACTION_DEBOUNCE_MS`)。已经有 alarm 排着队就什么都不做——这样一波连续聊天只触发一次分析,不会每条消息都问一次 LLM。
 - **模型**:Cloudflare Workers AI 的 `@cf/zai-org/glm-4.7-flash`,通过 `env.AI` 绑定调用,不经过任何第三方 API/密钥。选它是因为已经在用 Cloudflare 的基础设施,价格便宜,而且支持 function calling。
@@ -157,15 +157,26 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 - **新帖子提示**:析出成功后给当时在线的人广播一条通知,聊天页收到后用已有的状态提示条(`showStatus`,就是"已连接"/"连接已断开"那个会自动淡出的小胶囊)弹一下"新帖子:《标题》",不写进聊天记录,几秒后自动消失,复用现成机制没加新 UI。
 - **展示**:`/posts` 页面(`ChatRoom.listPosts()` RPC + `pages.ts` 的 `renderPostsPage`),聊天室页面右上角的"帖子"链接会显示当前数量(如 `Posts (3)`,轻量的 `countPosts()` RPC 取的,不用为了数个数把所有帖子的原文快照都拉一遍)。帖子页本身纯服务端渲染,没有实时更新(要看新帖子得手动刷新,聊天页那条 toast 提示是唯一的"有新帖子"信号)。
 - **已知的模型行为不确定性**:除了上面提到的"该调用工具没调用"和"`key_points` 格式不对"这两个已经加固过的失败模式,实测还撞见过一次"聊天原文是纯英文,析出的标题/摘要/要点却是中文"——提示词明确要求"提取内容用聊天记录本身使用的语言",但这次没被遵守。目前判断是 LLM 采样的非确定性,没有针对性修复,暂时接受这个残留的质量不确定性。
-- **还没做**(留给后续阶段):投票、结晶/结石/矿渣/化石分类、按分类决定的生命周期与保留策略、分类会随投票动态翻转。
+
+### Phase 2:投票与代谢
+
+原设想里"结晶/结石/矿渣/化石"四分类简化成了**二元判断:Good / 不是 Good**。理由是这个产品的单帖投票参与度现实中大概率很低("没表态"是绝对多数),四路分票会把本就稀薄的信号切得更碎,门槛设高了大部分帖子可能永远够不着任何一档,机制形同虚设;设二元判断,配合下面的动态重算,保留了原设想"分类会随投票翻转"的核心精神,先做一个大概率能真正跑起来的版本。
+
+- **投票**:`post_votes` 表(`post_id`, `hash_id`, `vote`, `updated_ts`),一个人对一个帖子只有一行,身份复用聊天室的匿名 hashId 体系。改票是 upsert(`ON CONFLICT DO UPDATE`),允许随时改主意,**不支持撤回成"没投过"**,只能在好/坏之间切换。投票走 `POST /posts/<id>/vote`(`secret` + `vote` in body,服务端算 hashId),不是走 WS——帖子页本来没有 WS 连接,为这一个低频动作专门起一条不划算。跟 `/ws` 一样做 Origin 校验;走现有的通用 HTTP 限流,没有单独加一层。
+- **分类规则**:净分数(好票 − 坏票)> 0 才是 Good,否则(含 0 票、平票、净负)都不是 Good——不设"中立"档,默认状态本身就落在"不是 Good"这一侧,不会因为没人理睬就无限堆积占版面。**不缓存分类结果**,`ChatRoom.listPosts()` 每次现查 `post_votes` 现算(`LEFT JOIN` + `GROUP BY`),GC 判定时也是现查现算。
+- **观察期**:`created_ts` 距今不满一个完整 GC 周期(7 天,`GC_CYCLE_MS`)的帖子,GC 直接跳过不判定——保证每个帖子至少有一整个周期被看到、被投票的机会,不会因为析出时机刚好卡在 GC 边界附近就被误杀。
+- **每周 GC**:`wrangler.jsonc` 的 Cron Trigger(`0 0 * * SUN`,每周日 UTC 零点——Cloudflare 的 cron 解析器不接受数字形式的 `0` 代表周日,必须写 `SUN`)触发 `scheduled()`,从 `RoomRegistry.listRoomsForGc(now)`(读现成的 `known_rooms` 表)拿"值得唤醒去检查"的房间名,逐个房间发 RPC 调 `ChatRoom.runWeeklyGc()`。中心 cron 只做分发,真正的清算(查观察期、查票数、判定、硬删)在各房间自己的 DO 里跑,不重蹈 `RoomRegistry` 曾经当过全站瓶颈的覆辙。所有房间统一同一个 GC 时间点,不按各自创建时间错峰——房间量级现在小,没必要为还没出现的规模先做复杂设计。硬删,不留痕迹。
+  - **ROI 优化**:`listRoomsForGc` 用 `known_rooms.created_ts` 直接过滤掉创建不满一个 GC 周期的房间——这类房间就算真有帖子,也必然还在自己的观察期内,这次 GC 铁定跳过,不用为了查一个注定跳过的结果去唤醒它的 DO。不需要新增任何状态,免费的优化。更细粒度的过滤(比如"这个房间从来没有析出过任何帖子,永久跳过")需要新增跨 DO 的记账,先不做——等真实房间量级出来,看这一步过滤够不够用再说。
+- **展示**:帖子页每张卡片按状态显示"观察期还剩 N 天" / "已保留"确定态 / 进度条+"距下次清理还有 N 天(M 好评/K 差评)"倒计时三种之一,进度条填充比例按全站统一的 GC 窗口(最近一个过去的周日到下一个周日)现算,不需要存储"上次 GC 何时跑"。投票按钮点击后原地更新票数和高亮,不整页刷新;非观察期的帖子投票后也会原地切换"已保留"/倒计时两种状态之间的显示,不用等刷新页面才反映最新结果。帖子页首次渲染时不会预先标出"你之前投过什么"(访客身份只存在客户端 localStorage,服务端渲染时拿不到),投票按钮总是渲染成"未投"外观。
+- **明确不做**(这个阶段):投票撤回、各房间错峰 GC、人工审核/管理员覆盖投票结果、删除时的通知——延续现有"防滥用全部自动化规则,没有人工介入"的风格,创建有 toast 提示,删除是静默的。
 
 ## 尚未实现 / 刻意搁置
 
 - 消息撤回/编辑(刻意不做)
 - 举报/禁言机制、房间目录浏览、服务条款/社区准则(暂时搁置)
-- 析出层 Phase 2/3(投票、分类、生命周期管理)——见上文"析出层(Phase 1)"
+- 析出层 Phase 3(如果二元分类被证明信息量不够,考虑往回加层次,比如原设想的四分类)——见上文"析出层(Phase 1 + Phase 2)"
 - CI/CD、staging 环境——**试过一次 staging,已经撤掉了**。方案是给 staging 一套独立的 Worker 脚本 + 独立域名(`staging.godot.chat` / `*.staging.godot.chat`),但这个产品的核心机制是"任意子域名自动建房",意味着 staging 也需要 `*.staging.godot.chat` 这种二级通配符——而 Cloudflare 免费的 Universal SSL 证书只覆盖"裸域名 + 一级通配符"(`godot.chat` + `*.godot.chat`),不覆盖 `*.staging.godot.chat` 这种二级通配符,会直接 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`。要解决得买 Advanced Certificate Manager(付费加订),或者把 staging 房间路由改成用路径而不是子域名(但那样就测不了这个产品最核心的子域名路由机制,失去了 staging 的意义)。评估下来风险/成本不划算,直接撤掉,以后谁想再试一次,先看这段。
 
 ## 版本历史
 
-用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.22.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
+用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.23.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。

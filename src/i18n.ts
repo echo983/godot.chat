@@ -66,6 +66,11 @@ export interface Messages {
     empty: string;
     keyPointsLabel: string;
     viewOriginalLink: string;
+    voteGoodLabel: string;
+    voteBadLabel: string;
+    gracePeriodLabel: string;
+    keptLabel: string;
+    countdownLabel: string;
   };
 }
 
@@ -128,6 +133,11 @@ const MESSAGES: Record<Locale, Messages> = {
       empty: "No posts yet — they form automatically once a topic emerges in the chat.",
       keyPointsLabel: "Key points",
       viewOriginalLink: "View original conversation",
+      voteGoodLabel: "Good",
+      voteBadLabel: "Not good",
+      gracePeriodLabel: "New post — {days} day(s) left in its observation period",
+      keptLabel: "Kept",
+      countdownLabel: "{days} day(s) until next cleanup ({good} good / {bad} not good) — vote to help it stay",
     },
   },
   es: {
@@ -188,6 +198,11 @@ const MESSAGES: Record<Locale, Messages> = {
       empty: "Todavía no hay publicaciones — se forman automáticamente cuando surge un tema en el chat.",
       keyPointsLabel: "Puntos clave",
       viewOriginalLink: "Ver conversación original",
+      voteGoodLabel: "Bueno",
+      voteBadLabel: "No bueno",
+      gracePeriodLabel: "Publicación nueva — quedan {days} día(s) de periodo de observación",
+      keptLabel: "Conservado",
+      countdownLabel: "{days} día(s) hasta la próxima limpieza ({good} buenos / {bad} no buenos) — vota para ayudar a conservarlo",
     },
   },
   "zh-Hans": {
@@ -246,6 +261,11 @@ const MESSAGES: Record<Locale, Messages> = {
       empty: "还没有帖子——聊天里形成明确主题后会自动析出。",
       keyPointsLabel: "要点",
       viewOriginalLink: "查看原文",
+      voteGoodLabel: "好评",
+      voteBadLabel: "差评",
+      gracePeriodLabel: "新帖子,观察期还剩 {days} 天",
+      keptLabel: "已保留",
+      countdownLabel: "距下次清理还有 {days} 天(当前 {good} 好评 / {bad} 差评),投一票帮它留下",
     },
   },
   "zh-Hant": {
@@ -304,6 +324,11 @@ const MESSAGES: Record<Locale, Messages> = {
       empty: "還沒有貼文——聊天裡形成明確主題後會自動析出。",
       keyPointsLabel: "要點",
       viewOriginalLink: "查看原文",
+      voteGoodLabel: "好評",
+      voteBadLabel: "差評",
+      gracePeriodLabel: "新貼文,觀察期還剩 {days} 天",
+      keptLabel: "已保留",
+      countdownLabel: "距下次清理還有 {days} 天(目前 {good} 好評 / {bad} 差評),投一票幫它留下",
     },
   },
 };

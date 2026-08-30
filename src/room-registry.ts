@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
+import { GC_CYCLE_MS } from "./gc-time";
 
 // 10 分钟内最多创建这么多个新房间,超出后这个 IP 被禁止"开新房间"这个动作 24 小时。
 // 已经存在的房间不受影响,随时能进——限制的是"从无到有"这个动作本身。
@@ -97,5 +98,25 @@ export class RoomRegistry extends DurableObject<Env> {
     );
 
     return { allowed: true };
+  }
+
+  /**
+   * 每周 GC 用:拿"值得唤醒去检查"的房间名列表,index.ts 的 scheduled() 拿到之后
+   * 逐个房间发 RPC 触发各自的 runWeeklyGc()。
+   *
+   * ROI 优化:创建时间不满一个 GC 周期的房间,就算真有帖子,那些帖子也必然还在
+   * 自己的观察期内,这次 GC 铁定跳过——所以直接在这里用 known_rooms.created_ts
+   * 把这类"太新"的房间过滤掉,连它们的 ChatRoom DO 都不用唤醒。不需要新增任何
+   * 状态,免费的优化。真到了"有帖子 vs 从来没有帖子"这种更细粒度的过滤值得做的
+   * 规模,再考虑要不要加跨 DO 的记账。
+   */
+  async listRoomsForGc(now: number): Promise<string[]> {
+    return [
+      ...this.ctx.storage.sql.exec<{ room: string }>(
+        "SELECT room FROM known_rooms WHERE ? - created_ts >= ?",
+        now,
+        GC_CYCLE_MS,
+      ),
+    ].map((r) => r.room);
   }
 }

@@ -1,5 +1,6 @@
 import { LOCALE_LABELS, SUPPORTED_LOCALES, t, type Locale } from "./i18n";
 import type { PostSummary, PostSourceMessage } from "./chat-room";
+import { isGoodPost, isInGracePeriod, graceDaysRemaining, gcProgress } from "./gc-time";
 
 // posts 的标题/摘要/要点来自 LLM 输出,不可信——渲染进服务端拼出来的 HTML 之前
 // 必须转义,跟聊天消息文本经 textContent/DOM API 渲染(天然转义)不一样
@@ -840,10 +841,31 @@ export function renderPostsPage(room: string, locale: Locale, rootDomain: string
     minute: "2-digit",
   });
 
+  const now = Date.now();
+  const { fraction: gcFraction, daysRemaining: gcDaysRemaining } = gcProgress(now);
+
   const postsHtml = posts.length
     ? posts
         .map((p) => {
           const dialogId = `original-${p.id}`;
+          const inGrace = isInGracePeriod(p.createdTs, now);
+          const good = isGoodPost(p.goodCount, p.badCount);
+
+          let statusInner: string;
+          if (inGrace) {
+            statusInner = `<p class="post-status post-status-grace">${m.gracePeriodLabel.replace("{days}", String(graceDaysRemaining(p.createdTs, now)))}</p>`;
+          } else if (good) {
+            statusInner = `<p class="post-status post-status-kept">${m.keptLabel}</p>`;
+          } else {
+            const countdownText = m.countdownLabel
+              .replace("{days}", String(gcDaysRemaining))
+              .replace("{good}", String(p.goodCount))
+              .replace("{bad}", String(p.badCount));
+            statusInner = `
+        <div class="post-gc-progress"><div class="post-gc-progress-fill" style="width:${Math.round(gcFraction * 100)}%"></div></div>
+        <p class="post-status post-status-countdown">${countdownText}</p>`;
+          }
+
           return `
     <article class="post">
       <h2>${escapeHtml(p.title)}</h2>
@@ -853,6 +875,11 @@ export function renderPostsPage(room: string, locale: Locale, rootDomain: string
       <ul class="post-key-points">
         ${p.keyPoints.map((kp) => `<li>${escapeHtml(kp)}</li>`).join("")}
       </ul>
+      <div class="post-status-area" data-status-for="${p.id}">${statusInner}</div>
+      <div class="post-votes" data-post-id="${p.id}" data-in-grace="${inGrace ? "1" : "0"}">
+        <button type="button" class="vote-btn vote-good" data-vote="good">${m.voteGoodLabel} <span class="vote-count" data-count="good">${p.goodCount}</span></button>
+        <button type="button" class="vote-btn vote-bad" data-vote="bad">${m.voteBadLabel} <span class="vote-count" data-count="bad">${p.badCount}</span></button>
+      </div>
       <button type="button" class="post-view-original" data-dialog="${dialogId}">${m.viewOriginalLink}</button>
     </article>
     <dialog id="${dialogId}" class="original-dialog">
@@ -895,6 +922,21 @@ ${FAVICON_LINK}
     padding: 0.35em 0.8em; cursor: pointer;
   }
   .post-view-original:hover { background: #f2f2f2; }
+  .post-status { font-size: 0.78rem; margin: 0 0 0.6rem; }
+  .post-status-grace { color: #888; }
+  .post-status-kept { color: #15803d; font-weight: 600; }
+  .post-status-countdown { color: #b45309; }
+  .post-gc-progress { height: 6px; border-radius: 999px; background: #f2f2f2; overflow: hidden; margin-bottom: 0.3rem; }
+  .post-gc-progress-fill { height: 100%; background: #f59e0b; border-radius: 999px; }
+  .post-votes { display: flex; gap: 0.5rem; margin-bottom: 0.7rem; }
+  .vote-btn {
+    font-size: 0.8rem; color: #555; background: none; border: 1px solid #ccc; border-radius: 6px;
+    padding: 0.35em 0.8em; cursor: pointer; display: flex; align-items: center; gap: 0.3em;
+  }
+  .vote-btn:hover { background: #f2f2f2; }
+  .vote-btn:disabled { opacity: 0.6; cursor: default; }
+  .vote-btn.voted { border-color: #1a1a1a; background: #1a1a1a; color: #fff; }
+  .vote-count { font-weight: 600; }
   dialog.original-dialog {
     border: none; border-radius: 12px; padding: 1.2rem; max-width: 32rem; width: 90%;
     max-height: 80vh; display: flex; flex-direction: column;
@@ -919,6 +961,68 @@ ${FAVICON_LINK}
   <div class="posts">${postsHtml}</div>
   ${ERROR_REPORTER_SCRIPT}
   <script>
+    // 跟聊天页共用同一个 localStorage key,同源共享——投票身份就是这个人在
+    // 本房间的聊天身份,不是另起一套
+    const SECRET_KEY = 'godot-chat-secret';
+    function randomSecret() {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    let secret = localStorage.getItem(SECRET_KEY);
+    if (!secret) {
+      secret = randomSecret();
+      localStorage.setItem(SECRET_KEY, secret);
+    }
+
+    const KEPT_LABEL = ${jsonForScript(m.keptLabel)};
+    const COUNTDOWN_TEMPLATE = ${jsonForScript(m.countdownLabel)};
+    const GC_DAYS_REMAINING = ${gcDaysRemaining};
+    const GC_FRACTION_PERCENT = ${Math.round(gcFraction * 100)};
+
+    document.querySelectorAll('.vote-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const container = btn.closest('.post-votes');
+        const postId = container.dataset.postId;
+        const inGrace = container.dataset.inGrace === '1';
+        btn.disabled = true;
+        try {
+          const res = await fetch('/posts/' + encodeURIComponent(postId) + '/vote', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ secret, vote: btn.dataset.vote }),
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+
+          container.querySelector('[data-count="good"]').textContent = data.goodCount;
+          container.querySelector('[data-count="bad"]').textContent = data.badCount;
+          container.querySelectorAll('.vote-btn').forEach((b) => {
+            b.classList.toggle('voted', b.dataset.vote === data.myVote);
+          });
+
+          // 观察期内的帖子不受投票影响(GC 本来就跳过它),状态区不用跟着变
+          if (!inGrace) {
+            const statusArea = document.querySelector('[data-status-for="' + postId + '"]');
+            if (statusArea) {
+              if (data.netScore > 0) {
+                statusArea.innerHTML = '<p class="post-status post-status-kept">' + KEPT_LABEL + '</p>';
+              } else {
+                const text = COUNTDOWN_TEMPLATE
+                  .replace('{days}', GC_DAYS_REMAINING)
+                  .replace('{good}', data.goodCount)
+                  .replace('{bad}', data.badCount);
+                statusArea.innerHTML =
+                  '<div class="post-gc-progress"><div class="post-gc-progress-fill" style="width:' + GC_FRACTION_PERCENT + '%"></div></div>' +
+                  '<p class="post-status post-status-countdown">' + text + '</p>';
+              }
+            }
+          }
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
     document.querySelectorAll('.post-view-original').forEach((btn) => {
       btn.addEventListener('click', () => {
         const dialog = document.getElementById(btn.dataset.dialog);

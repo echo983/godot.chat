@@ -60,19 +60,49 @@ for (const locale of locales) {
     checkScript(mod.renderLandingPage(locale, rootDomain), `landing page (${locale}, ${rootDomain})`);
   }
 }
+// 三条样例分别覆盖观察期/已保留/倒计时三种状态,让语法检查真正跑到进度条
+// 那段渲染逻辑,不只是覆盖到"有 posts"这一种情况
+const GC_CYCLE_MS = 7 * 24 * 60 * 60 * 1000;
+const now = Date.now();
 const samplePosts = [
   {
-    id: "p1",
-    title: "Sample topic",
+    id: "p1-fresh",
+    title: "Sample topic (fresh, in grace period)",
     summary: "A short summary.",
     keyPoints: ["point one", "point two"],
     fromSeq: 1,
     toSeq: 20,
-    createdTs: Date.now(),
+    createdTs: now,
     sourceMessages: [
-      { nickname: "Alice", hashId: "abcd1234abcd1234", text: "First message", ts: Date.now() },
-      { nickname: "Bob", hashId: "efgh5678efgh5678", text: "Second message", ts: Date.now() },
+      { nickname: "Alice", hashId: "abcd1234abcd1234", text: "First message", ts: now },
+      { nickname: "Bob", hashId: "efgh5678efgh5678", text: "Second message", ts: now },
     ],
+    goodCount: 0,
+    badCount: 0,
+  },
+  {
+    id: "p2-kept",
+    title: "Sample topic (old, net positive, kept)",
+    summary: "A short summary.",
+    keyPoints: ["point one", "point two"],
+    fromSeq: 21,
+    toSeq: 40,
+    createdTs: now - GC_CYCLE_MS - 1000,
+    sourceMessages: [{ nickname: "Carol", hashId: "ijkl9012ijkl9012", text: "Third message", ts: now }],
+    goodCount: 5,
+    badCount: 2,
+  },
+  {
+    id: "p3-countdown",
+    title: "Sample topic (old, net non-positive, countdown)",
+    summary: "A short summary.",
+    keyPoints: ["point one", "point two"],
+    fromSeq: 41,
+    toSeq: 60,
+    createdTs: now - GC_CYCLE_MS - 1000,
+    sourceMessages: [{ nickname: "Dave", hashId: "mnop3456mnop3456", text: "Fourth message", ts: now }],
+    goodCount: 1,
+    badCount: 3,
   },
 ];
 for (const locale of locales) {

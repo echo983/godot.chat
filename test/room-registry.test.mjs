@@ -4,9 +4,10 @@
 const CREATE_WINDOW_MS = 10 * 60 * 1000;
 const CREATE_THRESHOLD = 10;
 const CREATE_BAN_DURATION_MS = 24 * 60 * 60 * 1000;
+const GC_CYCLE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function makeRegistry() {
-  const knownRooms = new Set();
+  const knownRooms = new Map(); // room -> createdTs,对应真实表的 (room, created_ts)
   const events = new Map(); // `${ip}|${room}` -> ts
   const bans = new Map(); // ip -> bannedUntil
 
@@ -33,12 +34,18 @@ function makeRegistry() {
       return { allowed: false };
     }
 
-    knownRooms.add(room);
+    knownRooms.set(room, now);
     events.set(ip + "|" + room, now);
     return { allowed: true };
   }
 
-  return { checkRoomAccess, knownRooms, events, bans };
+  // ROI 优化:创建时间不满一个 GC 周期的房间,就算真有帖子也必然还在观察期内,
+  // 直接在这里过滤掉,不用唤醒它们的 ChatRoom DO
+  function listRoomsForGc(now) {
+    return [...knownRooms].filter(([, createdTs]) => now - createdTs >= GC_CYCLE_MS).map(([room]) => room);
+  }
+
+  return { checkRoomAccess, listRoomsForGc, knownRooms, events, bans };
 }
 
 let fail = 0;
@@ -91,6 +98,26 @@ function check(name, actual, expected) {
   // 封禁期间,哪怕是另一个全新房间名也不行
   const r12 = reg.checkRoomAccess("room-12", ip, t + 1000);
   check("封禁期间新房间继续被拒", r12.allowed, false);
+
+  // GC 扇出用的房间名列表(假设查询时间已经过了一个完整周期,不受"太新"过滤影响):
+  // 正常创建的都在,被拒的第11个不在
+  const farEnough = t + GC_CYCLE_MS;
+  const allRooms = reg.listRoomsForGc(farEnough).sort();
+  const expected = Array.from({ length: 10 }, (_, i) => "room-" + i).sort();
+  check("listRoomsForGc 包含全部10个正常创建的房间", JSON.stringify(allRooms), JSON.stringify(expected));
+  check("被拒的第11个房间不在列表里", allRooms.includes("room-11"), false);
+}
+
+// 场景七:ROI 优化——创建不满一个 GC 周期的房间,扫描时直接跳过,不唤醒它的 DO
+{
+  const reg = makeRegistry();
+  const now = 100 * GC_CYCLE_MS;
+  reg.checkRoomAccess("old-enough", "8.8.8.8", now - GC_CYCLE_MS - 1000);
+  reg.checkRoomAccess("too-new", "8.8.8.8", now - 60 * 60 * 1000); // 1小时前才创建
+
+  const rooms = reg.listRoomsForGc(now);
+  check("创建满一个周期的房间在扫描列表里", rooms.includes("old-enough"), true);
+  check("太新的房间被跳过,不在扫描列表里", rooms.includes("too-new"), false);
 }
 
 // 场景四:封禁期满后恢复正常
