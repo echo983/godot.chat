@@ -146,7 +146,7 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 构想里的"第二层"分三个阶段实现,当前只做完了 Phase 1——LLM 抽取 + 存储 + 展示,还没有投票、分类、生命周期管理。
 
-- **触发机制**:每个 `ChatRoom` 自己用 Durable Object Alarm 决定什么时候分析,不是全站定时扫描的中心化方案(吸取了 `RoomRegistry` 曾经当过全站唯一瓶颈的教训)。每条新的公开聊天消息(私聊不算,私聊本身就不落盘)都会检查:距上次分析以来新消息数是否≥10 条(`EXTRACTION_MIN_NEW_MESSAGES`),够了、且当前没有排队中的 alarm,就订一个 2 分钟后的 alarm(`EXTRACTION_DEBOUNCE_MS`)。已经有 alarm 排着队就什么都不做——这样一波连续聊天只触发一次分析,不会每条消息都问一次 LLM。
+- **触发机制**:每个 `ChatRoom` 自己用 Durable Object Alarm 决定什么时候分析,不是全站定时扫描的中心化方案(吸取了 `RoomRegistry` 曾经当过全站唯一瓶颈的教训)。每条新的公开聊天消息(私聊不算,私聊本身就不落盘)都会检查:距上次分析以来新消息文本的总字节数是否≥10KB(`EXTRACTION_MIN_NEW_BYTES`,按字节而不是按条数,是因为活跃房间刷屏几秒就能攒够10条短消息,按字节数更接近"攒够了值得分析的内容量"),够了、且当前没有排队中的 alarm,就订一个 2 分钟后的 alarm(`EXTRACTION_DEBOUNCE_MS`)。已经有 alarm 排着队就什么都不做——这样一波连续聊天只触发一次分析,不会每条消息都问一次 LLM。
 - **模型**:Cloudflare Workers AI 的 `@cf/zai-org/glm-4.7-flash`,通过 `env.AI` 绑定调用,不经过任何第三方 API/密钥。选它是因为已经在用 Cloudflare 的基础设施,价格便宜,而且支持 function calling。
 - **"有没有形成主题"这个判断,靠 function calling 本身表达**:给模型一个 `extract_post` 工具,提示词让它"只有真正形成明确主题、有实质内容交流才调用,普通闲聊不要调用"。模型选择调用就是析出,不调用就是判断"没有形成"——不需要额外解析一个布尔字段。
 - **供应商可替换**:业务逻辑(`chat-room.ts`)只认 `src/llm.ts` 里的 `LlmClient` 接口,不知道背后是 Workers AI 还是别的供应商,换供应商只用换 `llm.ts` 里的实现。

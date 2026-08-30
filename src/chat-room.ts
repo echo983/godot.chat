@@ -30,9 +30,11 @@ const MAX_STORED_MESSAGES = 1000;
 // 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
 const PAGE_SIZE = 50;
 
-// LLM 析出帖子:攒够这么多条新消息才考虑再分析一次,攒够之后再等这么久
-// (debounce)才真正触发——避免一波连续聊天触发很多次分析,也避免每条消息都去问 LLM
-const EXTRACTION_MIN_NEW_MESSAGES = 10;
+// LLM 析出帖子:攒够这么多字节的新消息文本才考虑再分析一次(按条数算在活跃房间
+// 里太频繁——短消息刷屏几秒就能攒够10条,按字节数更接近"攒够了值得分析的内容量"),
+// 攒够之后再等这么久(debounce)才真正触发——避免一波连续聊天触发很多次分析,
+// 也避免每条消息都去问 LLM
+const EXTRACTION_MIN_NEW_BYTES = 10 * 1024;
 const EXTRACTION_DEBOUNCE_MS = 2 * 60 * 1000;
 
 // C0 控制字符,保留 \t \n \r,其余(含 DEL)一律剔除
@@ -624,7 +626,7 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   /**
-   * 攒够 EXTRACTION_MIN_NEW_MESSAGES 条新消息,且当前没有排队中的 alarm,
+   * 攒够 EXTRACTION_MIN_NEW_BYTES 字节的新消息文本,且当前没有排队中的 alarm,
    * 就订一个 debounce 之后的 alarm——一波连续聊天只会触发一次分析,
    * 不会来一条分析一条。已经有 alarm 排着队就什么都不做,等它触发。
    */
@@ -634,11 +636,16 @@ export class ChatRoom extends DurableObject<Env> {
 
     const lastExtractedSeq = (await this.ctx.storage.get<number>("lastExtractedSeq")) ?? 0;
     const row = [
-      ...this.ctx.storage.sql.exec<{ maxSeq: number | null }>("SELECT MAX(seq) AS maxSeq FROM messages"),
+      ...this.ctx.storage.sql.exec<{ totalBytes: number | null }>(
+        // CAST 成 BLOB 是为了拿字节长度而不是字符数——LENGTH() 对 TEXT 列返回的是字符数,
+        // 中日韩文字一个字符在 UTF-8 里是 3 字节,不转成 BLOB 会把阈值实际放大 3 倍
+        "SELECT SUM(LENGTH(CAST(text AS BLOB))) AS totalBytes FROM messages WHERE seq > ?",
+        lastExtractedSeq,
+      ),
     ][0];
-    const maxSeq = row?.maxSeq ?? 0;
+    const totalBytes = row?.totalBytes ?? 0;
 
-    if (maxSeq - lastExtractedSeq >= EXTRACTION_MIN_NEW_MESSAGES) {
+    if (totalBytes >= EXTRACTION_MIN_NEW_BYTES) {
       await this.ctx.storage.setAlarm(Date.now() + EXTRACTION_DEBOUNCE_MS);
     }
   }
