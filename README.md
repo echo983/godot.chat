@@ -99,8 +99,9 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 `test/` 目录下按测试目标分两类:
 
-- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`、`body-utils.test.mjs`、`rate-limit.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。`body-utils.ts`/`rate-limit.ts` 特意从 `index.ts` 拆出来单独成文件,就是为了能被这样直接测——`index.ts` 本身因为顶部 import 了依赖 `cloudflare:workers` 的 `chat-room.ts`/`room-registry.ts`,没法在 Node 里加载。
-- **复刻逻辑**的(`identity-hash`、`control-chars`、`day-grouping`、`cooldown-jail`、`room-registry`、`presence`、`media-embed`、`message-size`):`chat-room.ts` 和 `room-registry.ts` 是 Durable Object,依赖 `this.ctx.storage.sql`、`crypto.subtle`、Hibernatable WebSocket 这些 Workers 专属 API,没法在普通 Node 里直接跑;`pages.ts` 里的客户端逻辑活在拼 HTML 字符串的模板字面量里,也没法作为模块直接 import。这些测试文件顶部都有注释说明——**改了对应的真实实现,要记得手动同步改测试**,它们不会自动帮你发现代码漂移。
+- **直接 import 真实源码**的(`room-name.test.mjs`、`room-name-cjk.test.mjs`、`i18n.test.mjs`、`body-utils.test.mjs`、`rate-limit.test.mjs`、`llm.test.mjs`):这几个模块是纯逻辑,不依赖 Workers 运行时,可以在普通 Node 里直接跑,测的就是真实代码。`body-utils.ts`/`rate-limit.ts` 特意从 `index.ts` 拆出来单独成文件,`llm.ts` 的 `parseExtraction` 单独导出,都是为了能被这样直接测——`index.ts` 本身因为顶部 import 了依赖 `cloudflare:workers` 的 `chat-room.ts`/`room-registry.ts`,没法在 Node 里加载。
+- **复刻逻辑**的(`identity-hash`、`control-chars`、`day-grouping`、`cooldown-jail`、`room-registry`、`presence`、`media-embed`、`message-size`、`safe-broadcast`):`chat-room.ts` 和 `room-registry.ts` 是 Durable Object,依赖 `this.ctx.storage.sql`、`crypto.subtle`、Hibernatable WebSocket 这些 Workers 专属 API,没法在普通 Node 里直接跑;`pages.ts` 里的客户端逻辑活在拼 HTML 字符串的模板字面量里,也没法作为模块直接 import。这些测试文件顶部都有注释说明——**改了对应的真实实现,要记得手动同步改测试**,它们不会自动帮你发现代码漂移。
+- **复刻 SQL,真实引擎跑**的(`posts-schema.test.mjs`):跟上面"复刻逻辑"类似没法直接 import,但这份测试没有用 JS 数据结构模拟数据库,而是用 Node 22+ 自带的 `node:sqlite`(`DatabaseSync`)起一个真实的内存 SQLite,把 `chat-room.ts` 里 `posts` 表的建表/迁移 SQL 原样复制过来跑一遍——专门测 `ALTER TABLE ADD COLUMN` 这类"新房间直接建表带新字段、旧房间靠 `PRAGMA table_info` 探测后补" 的迁移逻辑,这种东西手写 JS mock 测不出真实 SQL 语法/迁移行为对不对。
 
 `scripts/render-and-check.mjs`(即 `npm run check:pages`)是另一类校验:用 esbuild 真实打包 `pages.ts`,调用真实的 `renderChatPage`/`renderLandingPage`,对产出的每个 `<script>` 块做语法解析。这是专门为了防一类曾经真实上线过的 bug——`pages.ts` 把前端 JS 写在 TypeScript 模板字符串里,`\/`、`\s`、`\.`、`\]` 这类反斜杠转义会被外层模板字符串自己先吃掉一层,直接写在字符串里的正则表达式很容易被静默改坏,只对 `${...}` 占位符做替换的语法检查测不出这个问题,必须走真实渲染。
 
@@ -148,10 +149,14 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 - **触发机制**:每个 `ChatRoom` 自己用 Durable Object Alarm 决定什么时候分析,不是全站定时扫描的中心化方案(吸取了 `RoomRegistry` 曾经当过全站唯一瓶颈的教训)。每条新的公开聊天消息(私聊不算,私聊本身就不落盘)都会检查:距上次分析以来新消息文本的总字节数是否≥10KB(`EXTRACTION_MIN_NEW_BYTES`,按字节而不是按条数,是因为活跃房间刷屏几秒就能攒够10条短消息,按字节数更接近"攒够了值得分析的内容量"),够了、且当前没有排队中的 alarm,就订一个 2 分钟后的 alarm(`EXTRACTION_DEBOUNCE_MS`)。已经有 alarm 排着队就什么都不做——这样一波连续聊天只触发一次分析,不会每条消息都问一次 LLM。
 - **模型**:Cloudflare Workers AI 的 `@cf/zai-org/glm-4.7-flash`,通过 `env.AI` 绑定调用,不经过任何第三方 API/密钥。选它是因为已经在用 Cloudflare 的基础设施,价格便宜,而且支持 function calling。
-- **"有没有形成主题"这个判断,靠 function calling 本身表达**:给模型一个 `extract_post` 工具,提示词让它"只有真正形成明确主题、有实质内容交流才调用,普通闲聊不要调用"。模型选择调用就是析出,不调用就是判断"没有形成"——不需要额外解析一个布尔字段。
+- **"有没有形成主题"这个判断,靠 function calling 本身表达**:给模型一个 `extract_post` 工具,提示词让它"只有真正形成明确主题、有实质内容交流才调用,普通闲聊不要调用",而且明确要求"判断形成主题就必须调用工具、绝对不要用文字回复"。这条明确要求是加上去的——早期版本的提示词没这么强硬,实测过模型会出现"内心判断形成了主题,但选择用文字总结而不是调用工具"的情况,`tool_calls` 是空的,我们的代码把这种情况正确处理成"没有形成主题"(静默跳过,不报错),但对用户来说等于这次该析出的帖子凭空消失了,而且没有任何日志能看出来。加了这条强约束之后线上没再复现过。
 - **供应商可替换**:业务逻辑(`chat-room.ts`)只认 `src/llm.ts` 里的 `LlmClient` 接口,不知道背后是 Workers AI 还是别的供应商,换供应商只用换 `llm.ts` 里的实现。
-- **存储**:析出结果存在每个房间自己的 SQLite `posts` 表里(`title`/`summary`/`key_points`/来源消息的 `seq` 区间/`created_ts`),不跨房间。
-- **展示**:`/posts` 页面(`ChatRoom.listPosts()` RPC + `pages.ts` 的 `renderPostsPage`),聊天室页面右上角有个链接过去,纯服务端渲染,没有实时更新(要看新帖子得手动刷新)。
+- **`key_points` 解析容错**:工具 schema 明确声明 `key_points` 是字符串数组,但模型偶尔还是会把所有要点拼成一整段文字塞进一个字符串里返回。严格校验会把这种情况直接判无效丢弃(同样是静默的,前一条提到的那种"帖子凭空消失"问题的另一个变种)。现在的解析逻辑改成容错:碰到字符串就按中文顿号/英文分号/换行拆开;实在拆不出多条就把整段当一条保留,而不是直接丢弃整个帖子。
+- **存储**:析出结果存在每个房间自己的 SQLite `posts` 表里(`title`/`summary`/`key_points`/来源消息的 `seq` 区间/`created_ts`/`source_messages`),不跨房间。`source_messages` 是原始消息的永久快照(析出那一刻拍的),不是指向 `messages` 表的指针——见下面"查看原文"。
+- **查看原文**:帖子页每条帖子下面有个"查看原文"按钮,点开是个弹窗,内容来自帖子自己存的 `source_messages` 快照。最初的实现是存 `from_seq`/`to_seq` 区间、点击时跳到聊天室页面按区间现查 `messages` 表,但 `messages` 表只滚动保留最近 1000 条,聊天室后续活跃起来原始消息会被淘汰,链接就失效——而且越是有价值、后续应该被"结晶"的帖子,原文反而越可能因为房间持续活跃而先没了。改成存永久快照之后这个问题从设计上直接消失,不用再处理"是否还在保留窗口内"这种情况。
+- **新帖子提示**:析出成功后给当时在线的人广播一条通知,聊天页收到后用已有的状态提示条(`showStatus`,就是"已连接"/"连接已断开"那个会自动淡出的小胶囊)弹一下"新帖子:《标题》",不写进聊天记录,几秒后自动消失,复用现成机制没加新 UI。
+- **展示**:`/posts` 页面(`ChatRoom.listPosts()` RPC + `pages.ts` 的 `renderPostsPage`),聊天室页面右上角的"帖子"链接会显示当前数量(如 `Posts (3)`,轻量的 `countPosts()` RPC 取的,不用为了数个数把所有帖子的原文快照都拉一遍)。帖子页本身纯服务端渲染,没有实时更新(要看新帖子得手动刷新,聊天页那条 toast 提示是唯一的"有新帖子"信号)。
+- **已知的模型行为不确定性**:除了上面提到的"该调用工具没调用"和"`key_points` 格式不对"这两个已经加固过的失败模式,实测还撞见过一次"聊天原文是纯英文,析出的标题/摘要/要点却是中文"——提示词明确要求"提取内容用聊天记录本身使用的语言",但这次没被遵守。目前判断是 LLM 采样的非确定性,没有针对性修复,暂时接受这个残留的质量不确定性。
 - **还没做**(留给后续阶段):投票、结晶/结石/矿渣/化石分类、按分类决定的生命周期与保留策略、分类会随投票动态翻转。
 
 ## 尚未实现 / 刻意搁置
@@ -163,4 +168,4 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 
 ## 版本历史
 
-用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.20.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
+用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.22.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
