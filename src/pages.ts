@@ -1,4 +1,16 @@
 import { LOCALE_LABELS, SUPPORTED_LOCALES, t, type Locale } from "./i18n";
+import type { PostSummary } from "./chat-room";
+
+// posts 的标题/摘要/要点来自 LLM 输出,不可信——渲染进服务端拼出来的 HTML 之前
+// 必须转义,跟聊天消息文本经 textContent/DOM API 渲染(天然转义)不一样
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function renderLangSwitcher(locale: Locale): string {
   const options = SUPPORTED_LOCALES.map(
@@ -127,6 +139,8 @@ ${FAVICON_LINK}
   header { padding: 0.8rem 1rem; border-bottom: 1px solid #eee; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
   header .room { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #onlineBtn { font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; flex-shrink: 0; }
+  #postsLink { font-size: 0.8rem; font-weight: 400; color: #555; text-decoration: none; flex-shrink: 0; }
+  #postsLink:hover { text-decoration: underline; }
   #me { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 400; color: #555; cursor: pointer; flex-shrink: 0; max-width: 8rem; }
   #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; flex-shrink: 0; }
   #me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -205,6 +219,7 @@ ${FAVICON_LINK}
 <body>
   <header>
     <span class="room">#${room}</span>
+    <a id="postsLink" href="/posts" title="${m.postsLinkTitle}">${m.postsLinkLabel}</a>
     <span id="onlineBtn" title="${m.onlineBtnTitle}"></span>
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
@@ -787,6 +802,73 @@ ${FAVICON_LINK}
       resizeTextInput();
     });
 
+    ${langSwitchScript(rootDomain)}
+  </script>
+</body>
+</html>`;
+}
+
+export function renderPostsPage(room: string, locale: Locale, rootDomain: string, posts: PostSummary[]): string {
+  const messages = t(locale);
+  const m = messages.posts;
+  const timeFormatter = new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const postsHtml = posts.length
+    ? posts
+        .map(
+          (p) => `
+    <article class="post">
+      <h2>${escapeHtml(p.title)}</h2>
+      <p class="post-time">${timeFormatter.format(new Date(p.createdTs))}</p>
+      <p class="post-summary">${escapeHtml(p.summary)}</p>
+      <p class="post-key-points-label">${m.keyPointsLabel}</p>
+      <ul class="post-key-points">
+        ${p.keyPoints.map((kp) => `<li>${escapeHtml(kp)}</li>`).join("")}
+      </ul>
+    </article>`,
+        )
+        .join("")
+    : `<p class="empty">${m.empty}</p>`;
+
+  return `<!doctype html>
+<html lang="${locale}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${m.heading.replace("{room}", room)}</title>
+${FAVICON_LINK}
+<meta name="robots" content="noindex, nofollow">
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 0 auto; padding: 1.5rem; color: #1a1a1a; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+  header h1 { font-size: 1.2rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; }
+  nav a { color: #555; text-decoration: none; font-size: 0.85rem; flex-shrink: 0; }
+  nav a:hover { text-decoration: underline; }
+  .empty { color: #888; }
+  .post { border: 1px solid #eee; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+  .post h2 { font-size: 1.05rem; margin: 0 0 0.2rem; }
+  .post-time { font-size: 0.75rem; color: #999; margin: 0 0 0.7rem; }
+  .post-summary { margin: 0 0 0.7rem; line-height: 1.5; }
+  .post-key-points-label { font-size: 0.8rem; font-weight: 600; color: #666; margin: 0 0 0.3rem; }
+  .post-key-points { margin: 0; padding-left: 1.2rem; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(m.heading.replace("{room}", room))}</h1>
+    ${renderLangSwitcher(locale)}
+  </header>
+  <nav><a href="/">${m.backToChat}</a></nav>
+  <div class="posts">${postsHtml}</div>
+  ${ERROR_REPORTER_SCRIPT}
+  <script>
     ${langSwitchScript(rootDomain)}
   </script>
 </body>

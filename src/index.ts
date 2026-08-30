@@ -1,5 +1,5 @@
 import { normalizeRoomName } from "./room-name";
-import { renderChatPage, renderLandingPage } from "./pages";
+import { renderChatPage, renderLandingPage, renderPostsPage } from "./pages";
 import { resolveLocale } from "./i18n";
 import { readBodyCapped } from "./body-utils";
 import { createRateLimiter } from "./rate-limit";
@@ -12,6 +12,7 @@ export interface Env {
   CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
   ROOM_REGISTRY: DurableObjectNamespace<RoomRegistry>;
   ROOT_DOMAIN: string;
+  AI: Ai;
 }
 
 // 正式上线前不想让裸域名被扫到/探测到——先把 apex/www 一律 404,房间子域名不受影响
@@ -145,6 +146,13 @@ export default {
 
     if (request.method !== "GET") {
       return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (url.pathname === "/posts") {
+      const id = env.CHAT_ROOM.idFromName(room);
+      const stub = env.CHAT_ROOM.get(id);
+      const posts = await stub.listPosts();
+      return new Response(renderPostsPage(room, locale, rootDomain, posts), { headers: HTML_HEADERS });
     }
 
     return new Response(renderChatPage(room, locale, rootDomain), { headers: HTML_HEADERS });

@@ -60,6 +60,25 @@ for (const locale of locales) {
     checkScript(mod.renderLandingPage(locale, rootDomain), `landing page (${locale}, ${rootDomain})`);
   }
 }
+const samplePosts = [
+  {
+    id: "p1",
+    title: "Sample topic",
+    summary: "A short summary.",
+    keyPoints: ["point one", "point two"],
+    fromSeq: 1,
+    toSeq: 20,
+    createdTs: Date.now(),
+  },
+];
+for (const locale of locales) {
+  for (const rootDomain of rootDomains) {
+    checkScript(
+      mod.renderPostsPage("newyork", locale, rootDomain, samplePosts),
+      `posts page (${locale}, ${rootDomain})`,
+    );
+  }
+}
 
 console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1,6 +1,6 @@
 # godot.chat
 
-任意 `*.godot.chat` 子域名都是一个独立聊天室,访问即自动创建,不需要注册、不需要事先申请。这是产品构想([`docs/构想摘要.md`](docs/构想摘要.md))里"会代谢的聊天室"的**第一层**——实时聊天这个原始层。构想里"LLM 自动析出帖子"和"结晶/结石/矿渣/化石"分类投票系统是后续阶段,**这个仓库目前还没有做**。
+任意 `*.godot.chat` 子域名都是一个独立聊天室,访问即自动创建,不需要注册、不需要事先申请。这是产品构想([`docs/构想摘要.md`](docs/构想摘要.md))里"会代谢的聊天室"的**第一层**——实时聊天这个原始层,已经完成。**第二层**("析出层")目前完成了 Phase 1:LLM 从聊天中自动析出帖子并展示(`/posts` 页面),还没有投票、结晶/结石/矿渣/化石分类、生命周期管理——见下文"析出层(Phase 1)"。
 
 线上地址:[godot.chat](https://godot.chat)
 
@@ -13,6 +13,7 @@
 - 在线列表、私聊(悄悄话)
 - 简体中文/繁体中文/English/Español 四语言界面,根据浏览器语言自动切换,也可手动选择
 - 一整套针对匿名公共聊天室的防滥用机制(见下文"防滥用/资源保护""设计取舍")
+- 每个房间的聊天会被 LLM(Cloudflare Workers AI)自动分析,形成明确主题的讨论会被析出成"帖子",在 `/posts` 页面展示(见下文"析出层(Phase 1)")
 
 ## 架构
 
@@ -30,6 +31,8 @@ Cloudflare Workers + Durable Objects,没有独立后端服务器,没有数据库
                                         - 在线状态广播
                                         - 私聊路由
                                         - 频率限制/冷却/换身份封禁
+                                        - alarm 触发时调用 Workers AI
+                                          析出帖子,存本地 posts 表
 ```
 
 - **一个 Worker 脚本**(`src/index.ts`)通过通配符路由(`*.godot.chat/*`)处理所有子域名,按 Host 头解析出房间名,分发给对应的 Durable Object。
@@ -41,10 +44,11 @@ Cloudflare Workers + Durable Objects,没有独立后端服务器,没有数据库
 ```
 src/
   index.ts          Worker 入口,路由分发、CSP、robots.txt、客户端错误上报接口、限流
-  chat-room.ts       ChatRoom Durable Object:消息存储、身份、在线状态、私聊、防滥用
+  chat-room.ts       ChatRoom Durable Object:消息存储、身份、在线状态、私聊、防滥用、帖子析出调度
   room-registry.ts   RoomRegistry Durable Object:新房间创建限流
   room-name.ts       房间名校验规则(含 CJK/punycode 处理)
   i18n.ts            多语言文案 + 语言解析逻辑
+  llm.ts             LLM 抽象接口 + Workers AI(glm-4.7-flash)实现,帖子析出用
   pages.ts           页面 HTML/CSS/前端 JS(没有构建步骤,直接手写字符串模板)
   body-utils.ts       流式读取并按字节数上限截断请求体,不信任 Content-Length
   rate-limit.ts       内存级滑动窗口限流器(按 IP),index.ts 里两处限流共用
@@ -138,13 +142,25 @@ CLOUDFLARE_API_TOKEN=$(cat secret/cfkey.txt) CLOUDFLARE_ACCOUNT_ID=<你的账号
 - **私聊(悄悄话)不落盘**,纯实时中继,断线/离线就收不到,没有离线补发。公开聊天消息滚动保留最近 1000 条则是落盘的。
 - **防滥用全部是自动化规则**(消息频率限制、同身份发言冷却、换身份限流封禁、新建房间限流),**没有人工举报/禁言机制**——这是已知的、刻意先不做的缺口,不是忘了。
 
+## 析出层(Phase 1)
+
+构想里的"第二层"分三个阶段实现,当前只做完了 Phase 1——LLM 抽取 + 存储 + 展示,还没有投票、分类、生命周期管理。
+
+- **触发机制**:每个 `ChatRoom` 自己用 Durable Object Alarm 决定什么时候分析,不是全站定时扫描的中心化方案(吸取了 `RoomRegistry` 曾经当过全站唯一瓶颈的教训)。每条新的公开聊天消息(私聊不算,私聊本身就不落盘)都会检查:距上次分析以来新消息数是否≥10 条(`EXTRACTION_MIN_NEW_MESSAGES`),够了、且当前没有排队中的 alarm,就订一个 2 分钟后的 alarm(`EXTRACTION_DEBOUNCE_MS`)。已经有 alarm 排着队就什么都不做——这样一波连续聊天只触发一次分析,不会每条消息都问一次 LLM。
+- **模型**:Cloudflare Workers AI 的 `@cf/zai-org/glm-4.7-flash`,通过 `env.AI` 绑定调用,不经过任何第三方 API/密钥。选它是因为已经在用 Cloudflare 的基础设施,价格便宜,而且支持 function calling。
+- **"有没有形成主题"这个判断,靠 function calling 本身表达**:给模型一个 `extract_post` 工具,提示词让它"只有真正形成明确主题、有实质内容交流才调用,普通闲聊不要调用"。模型选择调用就是析出,不调用就是判断"没有形成"——不需要额外解析一个布尔字段。
+- **供应商可替换**:业务逻辑(`chat-room.ts`)只认 `src/llm.ts` 里的 `LlmClient` 接口,不知道背后是 Workers AI 还是别的供应商,换供应商只用换 `llm.ts` 里的实现。
+- **存储**:析出结果存在每个房间自己的 SQLite `posts` 表里(`title`/`summary`/`key_points`/来源消息的 `seq` 区间/`created_ts`),不跨房间。
+- **展示**:`/posts` 页面(`ChatRoom.listPosts()` RPC + `pages.ts` 的 `renderPostsPage`),聊天室页面右上角有个链接过去,纯服务端渲染,没有实时更新(要看新帖子得手动刷新)。
+- **还没做**(留给后续阶段):投票、结晶/结石/矿渣/化石分类、按分类决定的生命周期与保留策略、分类会随投票动态翻转。
+
 ## 尚未实现 / 刻意搁置
 
 - 消息撤回/编辑(刻意不做)
 - 举报/禁言机制、房间目录浏览、服务条款/社区准则(暂时搁置)
-- 构想里的核心功能——LLM 自动从聊天析出帖子、结晶/结石/矿渣/化石分类与投票、生命周期管理——完全未开始
+- 析出层 Phase 2/3(投票、分类、生命周期管理)——见上文"析出层(Phase 1)"
 - CI/CD、staging 环境——**试过一次 staging,已经撤掉了**。方案是给 staging 一套独立的 Worker 脚本 + 独立域名(`staging.godot.chat` / `*.staging.godot.chat`),但这个产品的核心机制是"任意子域名自动建房",意味着 staging 也需要 `*.staging.godot.chat` 这种二级通配符——而 Cloudflare 免费的 Universal SSL 证书只覆盖"裸域名 + 一级通配符"(`godot.chat` + `*.godot.chat`),不覆盖 `*.staging.godot.chat` 这种二级通配符,会直接 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`。要解决得买 Advanced Certificate Manager(付费加订),或者把 staging 房间路由改成用路径而不是子域名(但那样就测不了这个产品最核心的子域名路由机制,失去了 staging 的意义)。评估下来风险/成本不划算,直接撤掉,以后谁想再试一次,先看这段。
 
 ## 版本历史
 
-用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.19.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。
+用 `git tag` 查看,从 `v0.1.0`(通配符子域名 + 基础聊天室)到当前 `v0.20.x`,每个 tag 对应一次功能性变更,tag 的 message 里有简要说明。

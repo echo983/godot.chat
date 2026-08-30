@@ -8,6 +8,9 @@
   "vars": {
     "ROOT_DOMAIN": "godot.chat"
   },
+  "ai": {
+    "binding": "AI"
+  },
   "routes": [
     { "pattern": "godot.chat/*", "zone_name": "godot.chat" },
     { "pattern": "*.godot.chat/*", "zone_name": "godot.chat" }

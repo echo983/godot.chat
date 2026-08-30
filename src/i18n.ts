@@ -47,6 +47,8 @@ export interface Messages {
     whisperPlaceholder: string;
     closeLabel: string;
     ogDescription: string;
+    postsLinkLabel: string;
+    postsLinkTitle: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
@@ -56,6 +58,12 @@ export interface Messages {
       whisper_self: string;
       whisper_offline: string;
     };
+  };
+  posts: {
+    heading: string;
+    backToChat: string;
+    empty: string;
+    keyPointsLabel: string;
   };
 }
 
@@ -99,6 +107,8 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperPlaceholder: "Send a private message…",
       closeLabel: "Close",
       ogDescription: "Live chat in #{room} on godot.chat",
+      postsLinkLabel: "Posts",
+      postsLinkTitle: "Topics automatically distilled from this room's chat",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
@@ -108,6 +118,12 @@ const MESSAGES: Record<Locale, Messages> = {
         whisper_self: "You can't whisper yourself",
         whisper_offline: "That person isn't online anymore",
       },
+    },
+    posts: {
+      heading: "Posts in #{room}",
+      backToChat: "Back to chat",
+      empty: "No posts yet — they form automatically once a topic emerges in the chat.",
+      keyPointsLabel: "Key points",
     },
   },
   es: {
@@ -149,6 +165,8 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperPlaceholder: "Envía un mensaje privado…",
       closeLabel: "Cerrar",
       ogDescription: "Chat en vivo en #{room} en godot.chat",
+      postsLinkLabel: "Publicaciones",
+      postsLinkTitle: "Temas destilados automáticamente del chat de esta sala",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
@@ -158,6 +176,12 @@ const MESSAGES: Record<Locale, Messages> = {
         whisper_self: "No puedes enviarte un mensaje privado a ti mismo",
         whisper_offline: "Esa persona ya no está en línea",
       },
+    },
+    posts: {
+      heading: "Publicaciones en #{room}",
+      backToChat: "Volver al chat",
+      empty: "Todavía no hay publicaciones — se forman automáticamente cuando surge un tema en el chat.",
+      keyPointsLabel: "Puntos clave",
     },
   },
   "zh-Hans": {
@@ -197,6 +221,8 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperPlaceholder: "发一句悄悄话…",
       closeLabel: "关闭",
       ogDescription: "godot.chat 上的 #{room} 实时聊天室",
+      postsLinkLabel: "帖子",
+      postsLinkTitle: "从本房间聊天中自动析出的主题",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
@@ -206,6 +232,12 @@ const MESSAGES: Record<Locale, Messages> = {
         whisper_self: "不能私聊自己",
         whisper_offline: "对方已经不在线了",
       },
+    },
+    posts: {
+      heading: "#{room} 的帖子",
+      backToChat: "返回聊天",
+      empty: "还没有帖子——聊天里形成明确主题后会自动析出。",
+      keyPointsLabel: "要点",
     },
   },
   "zh-Hant": {
@@ -245,6 +277,8 @@ const MESSAGES: Record<Locale, Messages> = {
       whisperPlaceholder: "傳一句悄悄話…",
       closeLabel: "關閉",
       ogDescription: "godot.chat 上的 #{room} 即時聊天室",
+      postsLinkLabel: "貼文",
+      postsLinkTitle: "從本房間聊天中自動析出的主題",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
@@ -254,6 +288,12 @@ const MESSAGES: Record<Locale, Messages> = {
         whisper_self: "不能私訊自己",
         whisper_offline: "對方已經不在線了",
       },
+    },
+    posts: {
+      heading: "#{room} 的貼文",
+      backToChat: "返回聊天",
+      empty: "還沒有貼文——聊天裡形成明確主題後會自動析出。",
+      keyPointsLabel: "要點",
     },
   },
 };

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
+import { createWorkersAiClient } from "./llm";
 
 const MAX_MESSAGE_LENGTH = 2000;
 // Cloudflare Workers 平台本身允许单条 WebSocket 消息最大到 32 MiB——远超任何
@@ -29,6 +30,11 @@ const MAX_STORED_MESSAGES = 1000;
 // 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
 const PAGE_SIZE = 50;
 
+// LLM 析出帖子:攒够这么多条新消息才考虑再分析一次,攒够之后再等这么久
+// (debounce)才真正触发——避免一波连续聊天触发很多次分析,也避免每条消息都去问 LLM
+const EXTRACTION_MIN_NEW_MESSAGES = 10;
+const EXTRACTION_DEBOUNCE_MS = 2 * 60 * 1000;
+
 // C0 控制字符,保留 \t \n \r,其余(含 DEL)一律剔除
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]", "g");
 
@@ -47,6 +53,27 @@ interface HistoryRow {
   ts: number;
   nickname: string;
   hashId: string;
+  [key: string]: SqlStorageValue;
+}
+
+export interface PostSummary {
+  id: string;
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  fromSeq: number;
+  toSeq: number;
+  createdTs: number;
+}
+
+interface PostRow {
+  id: string;
+  title: string;
+  summary: string;
+  keyPoints: string;
+  fromSeq: number;
+  toSeq: number;
+  createdTs: number;
   [key: string]: SqlStorageValue;
 }
 
@@ -163,6 +190,18 @@ export class ChatRoom extends DurableObject<Env> {
       `CREATE TABLE IF NOT EXISTS ip_jail (
         ip TEXT PRIMARY KEY,
         jailed_until INTEGER NOT NULL
+      )`,
+    );
+
+    this.ctx.storage.sql.exec(
+      `CREATE TABLE IF NOT EXISTS posts (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        key_points TEXT NOT NULL,
+        from_seq INTEGER NOT NULL,
+        to_seq INTEGER NOT NULL,
+        created_ts INTEGER NOT NULL
       )`,
     );
   }
@@ -284,6 +323,16 @@ export class ChatRoom extends DurableObject<Env> {
     const hasMore = rows.length > PAGE_SIZE;
     const messages = rows.slice(0, PAGE_SIZE).reverse();
     return { messages, hasMore };
+  }
+
+  async listPosts(): Promise<PostSummary[]> {
+    const rows = [
+      ...this.ctx.storage.sql.exec<PostRow>(
+        "SELECT id, title, summary, key_points AS keyPoints, from_seq AS fromSeq, to_seq AS toSeq, created_ts AS createdTs " +
+          "FROM posts ORDER BY created_ts DESC",
+      ),
+    ];
+    return rows.map((r) => ({ ...r, keyPoints: JSON.parse(r.keyPoints) as string[] }));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -475,6 +524,7 @@ export class ChatRoom extends DurableObject<Env> {
         for (const socket of this.ctx.getWebSockets()) {
           socket.send(encoded);
         }
+        await this.maybeScheduleExtraction();
         return;
       }
 
@@ -571,5 +621,76 @@ export class ChatRoom extends DurableObject<Env> {
   ): Promise<void> {
     ws.close(wasClean ? code : 1011, reason);
     this.broadcastPresence();
+  }
+
+  /**
+   * 攒够 EXTRACTION_MIN_NEW_MESSAGES 条新消息,且当前没有排队中的 alarm,
+   * 就订一个 debounce 之后的 alarm——一波连续聊天只会触发一次分析,
+   * 不会来一条分析一条。已经有 alarm 排着队就什么都不做,等它触发。
+   */
+  private async maybeScheduleExtraction(): Promise<void> {
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    if (currentAlarm !== null) return;
+
+    const lastExtractedSeq = (await this.ctx.storage.get<number>("lastExtractedSeq")) ?? 0;
+    const row = [
+      ...this.ctx.storage.sql.exec<{ maxSeq: number | null }>("SELECT MAX(seq) AS maxSeq FROM messages"),
+    ][0];
+    const maxSeq = row?.maxSeq ?? 0;
+
+    if (maxSeq - lastExtractedSeq >= EXTRACTION_MIN_NEW_MESSAGES) {
+      await this.ctx.storage.setAlarm(Date.now() + EXTRACTION_DEBOUNCE_MS);
+    }
+  }
+
+  /**
+   * alarm 触发时真正调用 LLM。分析完这一段之后立刻检查这期间(debounce +
+   * LLM 调用耗时)是不是又攒够了新消息,够了就直接再订下一次,不用等下一条
+   * "chat" 消息才发现。
+   */
+  async alarm(): Promise<void> {
+    const lastExtractedSeq = (await this.ctx.storage.get<number>("lastExtractedSeq")) ?? 0;
+
+    const rows = [
+      ...this.ctx.storage.sql.exec<HistoryRow>(
+        "SELECT seq, id, text, ts, nickname, hash_id AS hashId FROM messages WHERE seq > ? ORDER BY seq ASC",
+        lastExtractedSeq,
+      ),
+    ];
+
+    if (rows.length === 0) return;
+
+    const maxSeq = rows[rows.length - 1].seq;
+
+    try {
+      const client = createWorkersAiClient(this.env.AI);
+      const extracted = await client.extractPost(
+        rows.map((r) => ({
+          nickname: r.nickname || "匿名",
+          hashSuffix: r.hashId.slice(-4),
+          text: r.text,
+        })),
+      );
+
+      if (extracted) {
+        this.ctx.storage.sql.exec(
+          "INSERT INTO posts (id, title, summary, key_points, from_seq, to_seq, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          crypto.randomUUID(),
+          extracted.title,
+          extracted.summary,
+          JSON.stringify(extracted.keyPoints),
+          rows[0].seq,
+          maxSeq,
+          Date.now(),
+        );
+      }
+    } catch (err) {
+      console.error("[extraction] failed", err);
+      // 分析失败也照样推进 lastExtractedSeq——不重试这一段,等下一批新消息
+      // 再触发,不然一段内容持续分析失败会让 alarm 卡在原地反复重试同一段
+    }
+
+    await this.ctx.storage.put("lastExtractedSeq", maxSeq);
+    await this.maybeScheduleExtraction();
   }
 }
