@@ -101,6 +101,17 @@ function writeState(ws: WebSocket, state: ConnState): void {
   ws.serializeAttachment(state);
 }
 
+// 尽力而为地发送:getWebSockets() 里可能混着正在关闭/刚关闭的连接(常见于同一批
+// 连接前后脚断开的时候),对着这种连接 send() 会抛 TypeError,不该因为其中一个
+// 已经断开就打断整个广播循环,让后面排队的其他在线用户也收不到
+function safeSend(socket: WebSocket, data: string): void {
+  try {
+    socket.send(data);
+  } catch {
+    // 连接已关闭,忽略
+  }
+}
+
 function normalizeNickname(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const cleaned = input.replace(CONTROL_CHARS, "").trim();
@@ -257,8 +268,12 @@ export class ChatRoom extends DurableObject<Env> {
 
     for (const socket of this.ctx.getWebSockets()) {
       if (readState(socket)?.ip !== ip) continue;
-      socket.send(JSON.stringify({ type: "error", code: "jailed" }));
-      socket.close(1008, "too many identity switches");
+      safeSend(socket, JSON.stringify({ type: "error", code: "jailed" }));
+      try {
+        socket.close(1008, "too many identity switches");
+      } catch {
+        // 已经关闭的连接,忽略
+      }
     }
 
     return true;
@@ -297,7 +312,7 @@ export class ChatRoom extends DurableObject<Env> {
   private broadcastPresence(): void {
     const encoded = JSON.stringify({ type: "presence", users: this.getPresenceUsers() });
     for (const socket of this.ctx.getWebSockets()) {
-      socket.send(encoded);
+      safeSend(socket, encoded);
     }
   }
 
@@ -524,7 +539,7 @@ export class ChatRoom extends DurableObject<Env> {
 
         const encoded = JSON.stringify({ type: "message", ...payload });
         for (const socket of this.ctx.getWebSockets()) {
-          socket.send(encoded);
+          safeSend(socket, encoded);
         }
         await this.maybeScheduleExtraction();
         return;
@@ -581,10 +596,10 @@ export class ChatRoom extends DurableObject<Env> {
           toHashId: targetHashId,
         });
 
-        for (const socket of targets) socket.send(encoded);
+        for (const socket of targets) safeSend(socket, encoded);
         // 回显给发送者自己的所有连接(多标签页也能看到自己发的私聊)
         for (const socket of this.ctx.getWebSockets()) {
-          if (readState(socket)?.hashId === state.hashId) socket.send(encoded);
+          if (readState(socket)?.hashId === state.hashId) safeSend(socket, encoded);
         }
         return;
       }
@@ -621,7 +636,16 @@ export class ChatRoom extends DurableObject<Env> {
     reason: string,
     wasClean: boolean,
   ): Promise<void> {
-    ws.close(wasClean ? code : 1011, reason);
+    // 1005/1006 是 WebSocket 协议保留码("没收到关闭码"/"异常断开"),规范禁止
+    // 显式设置在 Close 帧里——客户端调 ws.close() 不带参数时,浏览器/Node 会把
+    // 这次关闭上报成 code=1005,原样转发给 ws.close() 会抛 InvalidAccessError
+    const isReservedCode = code === 1005 || code === 1006;
+    const closeCode = wasClean ? (isReservedCode ? 1000 : code) : 1011;
+    try {
+      ws.close(closeCode, reason);
+    } catch {
+      // 已经关闭的连接,忽略
+    }
     this.broadcastPresence();
   }
 
