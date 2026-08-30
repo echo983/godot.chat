@@ -1,5 +1,5 @@
 import { LOCALE_LABELS, SUPPORTED_LOCALES, t, type Locale } from "./i18n";
-import type { PostSummary } from "./chat-room";
+import type { PostSummary, PostSourceMessage } from "./chat-room";
 
 // posts 的标题/摘要/要点来自 LLM 输出,不可信——渲染进服务端拼出来的 HTML 之前
 // 必须转义,跟聊天消息文本经 textContent/DOM API 渲染(天然转义)不一样
@@ -119,7 +119,7 @@ ${indexable ? "" : '<meta name="robots" content="noindex, nofollow">\n'}<meta pr
 </html>`;
 }
 
-export function renderChatPage(room: string, locale: Locale, rootDomain: string): string {
+export function renderChatPage(room: string, locale: Locale, rootDomain: string, postsCount: number): string {
   const messages = t(locale);
   const m = messages.chat;
   return `<!doctype html>
@@ -145,15 +145,8 @@ ${FAVICON_LINK}
   #me img { width: 20px; height: 20px; border-radius: 50%; background: #eee; flex-shrink: 0; }
   #me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   select { padding: 0.3em 0.5em; border-radius: 6px; border: 1px solid #ccc; font-size: 0.8rem; flex-shrink: 0; }
-  .jump-banner {
-    display: none; align-items: center; justify-content: space-between; gap: 0.8rem;
-    padding: 0.5rem 1rem; background: #fef3c7; color: #78350f; font-size: 0.82rem; flex-shrink: 0;
-  }
-  .jump-banner.show { display: flex; }
-  .jump-banner button { padding: 0.35em 0.8em; font-size: 0.8rem; background: #78350f; align-self: auto; }
   .chat-body { position: relative; flex: 1; min-height: 0; }
   #log { position: absolute; inset: 0; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
-  .row.highlight .msg { background: #fde68a; }
   .day-sep { align-self: center; font-size: 0.75rem; color: #888; background: #f2f2f2; padding: 0.2em 0.9em; border-radius: 999px; margin: 0.3rem 0; }
   .row { display: flex; gap: 0.5rem; align-items: flex-end; }
   .row.mine { flex-direction: row-reverse; }
@@ -161,7 +154,7 @@ ${FAVICON_LINK}
   .bubble { max-width: 70%; }
   .who { font-size: 0.75rem; color: #999; margin-bottom: 0.15rem; }
   .row.mine .who { text-align: right; }
-  .msg { padding: 0.5em 0.8em; background: #f2f2f2; border-radius: 8px; word-break: break-word; white-space: pre-wrap; transition: background-color 1.5s ease; }
+  .msg { padding: 0.5em 0.8em; background: #f2f2f2; border-radius: 8px; word-break: break-word; white-space: pre-wrap; }
   .row.mine .msg { background: #dbeafe; }
   .msg-media { display: block; max-width: 100%; max-height: 20rem; border-radius: 8px; margin-top: 0.4rem; }
   form { display: flex; gap: 0.5rem; padding: 0.8rem; border-top: 1px solid #eee; }
@@ -226,15 +219,11 @@ ${FAVICON_LINK}
 <body>
   <header>
     <span class="room">#${room}</span>
-    <a id="postsLink" href="/posts" title="${m.postsLinkTitle}">${m.postsLinkLabel}</a>
+    <a id="postsLink" href="/posts" title="${m.postsLinkTitle}">${m.postsLinkLabel} (${postsCount})</a>
     <span id="onlineBtn" title="${m.onlineBtnTitle}"></span>
     <span id="me" title="${m.changeNicknameTitle}"></span>
     ${renderLangSwitcher(locale)}
   </header>
-  <div id="jumpBanner" class="jump-banner">
-    <span>${m.viewingHistoryNotice}</span>
-    <button type="button" id="jumpBackBtn">${m.backToLatestButton}</button>
-  </div>
   <div class="chat-body">
     <div id="log"></div>
     <div id="status"></div>
@@ -303,8 +292,6 @@ ${FAVICON_LINK}
 
     const log = document.getElementById('log');
     const status = document.getElementById('status');
-    const jumpBanner = document.getElementById('jumpBanner');
-    const jumpBackBtn = document.getElementById('jumpBackBtn');
     const meEl = document.getElementById('me');
     const sendForm = document.getElementById('send');
     const sendBtn = document.getElementById('sendBtn');
@@ -570,28 +557,6 @@ ${FAVICON_LINK}
     let reconnectTimer = null;
     let isJailed = false;
 
-    // 从帖子页"查看原文"跳过来的:URL 带 from/to 就说明要定位到那一段历史,
-    // 而不是像平常一样直接显示最新消息。这个状态只在首次连接时用一次——
-    // 重连(网络抖动/断线重连)不会重新触发跳转,免得每次重连都跳回旧片段
-    const jumpParams = new URLSearchParams(location.search);
-    const jumpFromRaw = jumpParams.get('from');
-    const jumpToRaw = jumpParams.get('to');
-    let pendingJump =
-      jumpFromRaw && jumpToRaw ? { from: Number(jumpFromRaw), to: Number(jumpToRaw) } : null;
-    let pendingHistorySnapshot = null; // jump 结果是 unavailable 时,退回展示这份最新历史
-
-    jumpBackBtn.addEventListener('click', () => {
-      location.href = location.pathname;
-    });
-
-    function highlightMessage(seq) {
-      const row = log.querySelector('[data-seq="' + seq + '"]');
-      if (!row) return;
-      row.classList.add('highlight');
-      row.scrollIntoView({ block: 'center' });
-      setTimeout(() => row.classList.remove('highlight'), 2500);
-    }
-
     function renderHistorySnapshot(data) {
       log.innerHTML = '';
       lastDayKey = null;
@@ -615,7 +580,6 @@ ${FAVICON_LINK}
         reconnectDelay = RECONNECT_BASE_DELAY;
         showStatus(I18N.chat.connected);
         sendJSON({ type: 'hello', secret, nickname });
-        if (pendingJump) sendJSON({ type: 'jump_to', from: pendingJump.from, to: pendingJump.to });
         if (!nickname) openNickDialog();
         else textInput.focus();
       };
@@ -650,7 +614,6 @@ ${FAVICON_LINK}
       const row = document.createElement('div');
       row.className = 'row' + (m.hashId === myHashId ? ' mine' : '');
       row.dataset.hashId = m.hashId;
-      row.dataset.seq = m.seq;
 
       const img = document.createElement('img');
       img.src = avatarUrl(m.hashId);
@@ -766,6 +729,11 @@ ${FAVICON_LINK}
         return;
       }
 
+      if (data.type === 'post_extracted') {
+        showStatus(I18N.chat.postExtractedNotice.replace('{title}', data.title), 4000);
+        return;
+      }
+
       if (data.type === 'whisper') {
         const mine = data.fromHashId === myHashId;
         const otherHashId = mine ? data.toHashId : data.fromHashId;
@@ -782,13 +750,6 @@ ${FAVICON_LINK}
       }
 
       if (data.type === 'history') {
-        // 带着 from/to 跳过来的:先把这份"最新历史"存着,不立刻渲染——
-        // 等 jump_to 的结果回来了再决定是渲染跳转目标,还是(跳转目标已经不在
-        // 保留范围内)退回展示这份。不然会先闪一下最新消息,紧接着又被替换掉。
-        if (pendingJump) {
-          pendingHistorySnapshot = data;
-          return;
-        }
         // 重连之后服务器会重新推一份历史快照——把上一次连接留下的内容清空再重建,
         // 不然这批消息会跟断线前已经渲染好的重复一遍
         renderHistorySnapshot(data);
@@ -802,32 +763,6 @@ ${FAVICON_LINK}
           oldestSeq = data.messages[0].seq;
           prependMessages(data.messages);
         }
-        return;
-      }
-
-      if (data.type === 'jump_to') {
-        const wasPending = pendingJump;
-        pendingJump = null;
-        if (!wasPending) return; // 迟到的响应(比如断线重连后又来一次),忽略
-
-        if (!data.available) {
-          showStatus(I18N.chat.jumpUnavailable, 0);
-          if (pendingHistorySnapshot) renderHistorySnapshot(pendingHistorySnapshot);
-          pendingHistorySnapshot = null;
-          return;
-        }
-
-        pendingHistorySnapshot = null;
-        log.innerHTML = '';
-        lastDayKey = null;
-        firstDayKey = null;
-        loadingHistory = false;
-        appendMessages(data.messages);
-        oldestSeq = data.messages.length ? data.messages[0].seq : null;
-        hasMoreHistory = data.hasMore;
-        log.scrollTop = 0;
-        jumpBanner.classList.add('show');
-        highlightMessage(data.from);
         return;
       }
 
@@ -882,6 +817,18 @@ ${FAVICON_LINK}
 </html>`;
 }
 
+function renderSourceMessage(msg: PostSourceMessage, timeFormatter: Intl.DateTimeFormat, anonymousLabel: string): string {
+  const avatar = `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(msg.hashId)}&size=64`;
+  return `
+      <div class="orig-row">
+        <img src="${avatar}" alt="">
+        <div class="orig-bubble">
+          <div class="orig-who">${escapeHtml(msg.nickname || anonymousLabel)} (${escapeHtml(msg.hashId.slice(-4))}) · ${timeFormatter.format(new Date(msg.ts))}</div>
+          <div class="orig-msg">${escapeHtml(msg.text)}</div>
+        </div>
+      </div>`;
+}
+
 export function renderPostsPage(room: string, locale: Locale, rootDomain: string, posts: PostSummary[]): string {
   const messages = t(locale);
   const m = messages.posts;
@@ -895,8 +842,9 @@ export function renderPostsPage(room: string, locale: Locale, rootDomain: string
 
   const postsHtml = posts.length
     ? posts
-        .map(
-          (p) => `
+        .map((p) => {
+          const dialogId = `original-${p.id}`;
+          return `
     <article class="post">
       <h2>${escapeHtml(p.title)}</h2>
       <p class="post-time">${timeFormatter.format(new Date(p.createdTs))}</p>
@@ -905,9 +853,18 @@ export function renderPostsPage(room: string, locale: Locale, rootDomain: string
       <ul class="post-key-points">
         ${p.keyPoints.map((kp) => `<li>${escapeHtml(kp)}</li>`).join("")}
       </ul>
-      <a class="post-view-original" href="/?from=${p.fromSeq}&amp;to=${p.toSeq}">${m.viewOriginalLink}</a>
-    </article>`,
-        )
+      <button type="button" class="post-view-original" data-dialog="${dialogId}">${m.viewOriginalLink}</button>
+    </article>
+    <dialog id="${dialogId}" class="original-dialog">
+      <div class="dialog-header">
+        <h2>${escapeHtml(p.title)}</h2>
+        <button type="button" class="dialog-close" data-close="${dialogId}" aria-label="${messages.chat.closeLabel}">×</button>
+      </div>
+      <div class="original-log">
+        ${p.sourceMessages.map((sm) => renderSourceMessage(sm, timeFormatter, messages.chat.anonymous)).join("")}
+      </div>
+    </dialog>`;
+        })
         .join("")
     : `<p class="empty">${m.empty}</p>`;
 
@@ -933,8 +890,24 @@ ${FAVICON_LINK}
   .post-summary { margin: 0 0 0.7rem; line-height: 1.5; }
   .post-key-points-label { font-size: 0.8rem; font-weight: 600; color: #666; margin: 0 0 0.3rem; }
   .post-key-points { margin: 0 0 0.7rem; padding-left: 1.2rem; line-height: 1.5; }
-  .post-view-original { font-size: 0.8rem; color: #555; text-decoration: none; }
-  .post-view-original:hover { text-decoration: underline; }
+  .post-view-original {
+    font-size: 0.8rem; color: #555; background: none; border: 1px solid #ccc; border-radius: 6px;
+    padding: 0.35em 0.8em; cursor: pointer;
+  }
+  .post-view-original:hover { background: #f2f2f2; }
+  dialog.original-dialog {
+    border: none; border-radius: 12px; padding: 1.2rem; max-width: 32rem; width: 90%;
+    max-height: 80vh; display: flex; flex-direction: column;
+  }
+  dialog.original-dialog::backdrop { background: rgba(0,0,0,0.4); }
+  .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.8rem; flex-shrink: 0; }
+  .dialog-header h2 { margin: 0; font-size: 1.05rem; }
+  .dialog-close { background: none; border: none; color: #999; cursor: pointer; font-size: 1.3rem; padding: 0.3rem; margin: -0.3rem; line-height: 1; flex-shrink: 0; }
+  .original-log { overflow-y: auto; display: flex; flex-direction: column; gap: 0.6rem; }
+  .orig-row { display: flex; gap: 0.5rem; align-items: flex-start; }
+  .orig-row img { width: 24px; height: 24px; border-radius: 50%; background: #eee; flex-shrink: 0; }
+  .orig-who { font-size: 0.72rem; color: #999; margin-bottom: 0.15rem; }
+  .orig-msg { padding: 0.4em 0.7em; background: #f2f2f2; border-radius: 8px; font-size: 0.9rem; word-break: break-word; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -946,6 +919,24 @@ ${FAVICON_LINK}
   <div class="posts">${postsHtml}</div>
   ${ERROR_REPORTER_SCRIPT}
   <script>
+    document.querySelectorAll('.post-view-original').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const dialog = document.getElementById(btn.dataset.dialog);
+        if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      });
+    });
+    document.querySelectorAll('.dialog-close').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const dialog = document.getElementById(btn.dataset.close);
+        if (dialog) dialog.close();
+      });
+    });
+    document.querySelectorAll('.original-dialog').forEach((dialog) => {
+      dialog.addEventListener('click', (e) => {
+        if (e.target === dialog) dialog.close();
+      });
+    });
+
     ${langSwitchScript(rootDomain)}
   </script>
 </body>

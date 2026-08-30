@@ -155,6 +155,9 @@ export default {
       return new Response(renderPostsPage(room, locale, rootDomain, posts), { headers: HTML_HEADERS });
     }
 
-    return new Response(renderChatPage(room, locale, rootDomain), { headers: HTML_HEADERS });
+    const chatRoomId = env.CHAT_ROOM.idFromName(room);
+    const chatRoomStub = env.CHAT_ROOM.get(chatRoomId);
+    const postsCount = await chatRoomStub.countPosts();
+    return new Response(renderChatPage(room, locale, rootDomain, postsCount), { headers: HTML_HEADERS });
   },
 } satisfies ExportedHandler<Env>;

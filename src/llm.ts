@@ -41,7 +41,9 @@ const EXTRACT_TOOL = {
         key_points: {
           type: "array",
           items: { type: "string" },
-          description: "主要观点、结论或分歧,每条一句话,3-6条",
+          description:
+            "主要观点、结论或分歧,每条一句话,3-6条。必须是 JSON 数组,数组里每一项是一条独立的字符串——" +
+            "不要把所有要点拼成一整段文字塞进一个字符串里。",
         },
       },
       required: ["title", "summary", "key_points"],
@@ -61,15 +63,36 @@ interface WorkersAiChatResponse {
   }>;
 }
 
+// 尽管工具 schema 明确声明 key_points 是数组,模型偶尔还是会把所有要点拼成一整段
+// 文字塞进一个字符串里(用中文/英文分号或换行分隔)。与其直接判无效整条丢弃,
+// 不如尽量按常见分隔符拆回一条一条;拆不出多条就退化成一整段当一条,好歹不算丢。
+function splitKeyPointsString(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const parts = trimmed
+    .split(/[;；\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [trimmed];
+}
+
 export function parseExtraction(raw: unknown): ExtractedPost | null {
   if (typeof raw !== "object" || raw === null) return null;
   const obj = raw as Record<string, unknown>;
 
-  if (typeof obj.title !== "string" || typeof obj.summary !== "string" || !Array.isArray(obj.key_points)) {
+  if (typeof obj.title !== "string" || typeof obj.summary !== "string") {
     return null;
   }
 
-  const keyPoints = obj.key_points.filter((p): p is string => typeof p === "string");
+  let keyPoints: string[];
+  if (Array.isArray(obj.key_points)) {
+    keyPoints = obj.key_points.filter((p): p is string => typeof p === "string");
+  } else if (typeof obj.key_points === "string") {
+    keyPoints = splitKeyPointsString(obj.key_points);
+  } else {
+    return null;
+  }
+
   if (keyPoints.length === 0) return null;
 
   return { title: obj.title.trim(), summary: obj.summary.trim(), keyPoints };

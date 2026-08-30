@@ -52,7 +52,7 @@ const rootDomains = ["godot.chat", "example.test"];
 
 for (const locale of locales) {
   for (const rootDomain of rootDomains) {
-    checkScript(mod.renderChatPage("newyork", locale, rootDomain), `chat page (${locale}, ${rootDomain})`);
+    checkScript(mod.renderChatPage("newyork", locale, rootDomain, 3), `chat page (${locale}, ${rootDomain})`);
   }
 }
 for (const locale of locales) {
@@ -69,6 +69,10 @@ const samplePosts = [
     fromSeq: 1,
     toSeq: 20,
     createdTs: Date.now(),
+    sourceMessages: [
+      { nickname: "Alice", hashId: "abcd1234abcd1234", text: "First message", ts: Date.now() },
+      { nickname: "Bob", hashId: "efgh5678efgh5678", text: "Second message", ts: Date.now() },
+    ],
   },
 ];
 for (const locale of locales) {

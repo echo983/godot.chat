@@ -30,9 +30,6 @@ const MAX_STORED_MESSAGES = 1000;
 // 每批历史消息的条数,初次连接和向上翻页懒加载都用这个
 const PAGE_SIZE = 50;
 
-// "查看原文"取帖子析出区间的安全阀,正常帖子的区间远远到不了这个量级
-const MAX_JUMP_RANGE = 500;
-
 // LLM 析出帖子:攒够这么多字节的新消息文本才考虑再分析一次(按条数算在活跃房间
 // 里太频繁——短消息刷屏几秒就能攒够10条,按字节数更接近"攒够了值得分析的内容量"),
 // 攒够之后再等这么久(debounce)才真正触发——避免一波连续聊天触发很多次分析,
@@ -61,6 +58,13 @@ interface HistoryRow {
   [key: string]: SqlStorageValue;
 }
 
+export interface PostSourceMessage {
+  nickname: string;
+  hashId: string;
+  text: string;
+  ts: number;
+}
+
 export interface PostSummary {
   id: string;
   title: string;
@@ -69,6 +73,7 @@ export interface PostSummary {
   fromSeq: number;
   toSeq: number;
   createdTs: number;
+  sourceMessages: PostSourceMessage[];
 }
 
 interface PostRow {
@@ -79,6 +84,7 @@ interface PostRow {
   fromSeq: number;
   toSeq: number;
   createdTs: number;
+  sourceMessages: string;
   [key: string]: SqlStorageValue;
 }
 
@@ -217,9 +223,18 @@ export class ChatRoom extends DurableObject<Env> {
         key_points TEXT NOT NULL,
         from_seq INTEGER NOT NULL,
         to_seq INTEGER NOT NULL,
-        created_ts INTEGER NOT NULL
+        created_ts INTEGER NOT NULL,
+        source_messages TEXT NOT NULL DEFAULT '[]'
       )`,
     );
+
+    // 兼容这次改动之前就已经建表的房间
+    const postCols = [...this.ctx.storage.sql.exec("PRAGMA table_info(posts)")].map(
+      (row) => (row as { name: string }).name,
+    );
+    if (!postCols.includes("source_messages")) {
+      this.ctx.storage.sql.exec("ALTER TABLE posts ADD COLUMN source_messages TEXT NOT NULL DEFAULT '[]'");
+    }
   }
 
   private isJailed(ip: string, now: number): boolean {
@@ -345,46 +360,25 @@ export class ChatRoom extends DurableObject<Env> {
     return { messages, hasMore };
   }
 
-  /**
-   * 帖子"查看原文"用:取 [from, to] 这个原始消息区间。跟 fetchHistoryPage 不同,
-   * 这里不按固定页大小截断——帖子析出的区间本身就是完整的一段讨论,截断了等于
-   * 白链接;LIMIT 只是防误用/防恶意构造超大区间的安全阀,正常帖子远远到不了这个量级。
-   * 如果 from 已经早于当前保留窗口最早的消息(被滚动淘汰了),或者区间内根本查
-   * 不到消息(比如 from 超过了当前最大 seq——正常链接不会这样,只有手改 URL 才会),
-   * available 都是 false。
-   */
-  private fetchHistoryRange(from: number, to: number): { available: boolean; messages: HistoryRow[]; hasEarlier: boolean } {
-    const minRow = [...this.ctx.storage.sql.exec<{ minSeq: number | null }>("SELECT MIN(seq) AS minSeq FROM messages")][0];
-    const minSeq = minRow?.minSeq ?? null;
-
-    if (minSeq === null || from < minSeq) {
-      return { available: false, messages: [], hasEarlier: false };
-    }
-
-    const messages = [
-      ...this.ctx.storage.sql.exec<HistoryRow>(
-        "SELECT seq, id, text, ts, nickname, hash_id AS hashId FROM messages WHERE seq >= ? AND seq <= ? ORDER BY seq ASC LIMIT ?",
-        from,
-        to,
-        MAX_JUMP_RANGE,
-      ),
-    ];
-
-    if (messages.length === 0) {
-      return { available: false, messages: [], hasEarlier: false };
-    }
-
-    return { available: true, messages, hasEarlier: from > minSeq };
-  }
-
   async listPosts(): Promise<PostSummary[]> {
     const rows = [
       ...this.ctx.storage.sql.exec<PostRow>(
-        "SELECT id, title, summary, key_points AS keyPoints, from_seq AS fromSeq, to_seq AS toSeq, created_ts AS createdTs " +
-          "FROM posts ORDER BY created_ts DESC",
+        "SELECT id, title, summary, key_points AS keyPoints, from_seq AS fromSeq, to_seq AS toSeq, " +
+          "created_ts AS createdTs, source_messages AS sourceMessages FROM posts ORDER BY created_ts DESC",
       ),
     ];
-    return rows.map((r) => ({ ...r, keyPoints: JSON.parse(r.keyPoints) as string[] }));
+    return rows.map((r) => ({
+      ...r,
+      keyPoints: JSON.parse(r.keyPoints) as string[],
+      sourceMessages: JSON.parse(r.sourceMessages) as PostSourceMessage[],
+    }));
+  }
+
+  // 聊天室页头"帖子"入口旁边显示数量用——单独一个轻量查询,不用为了数个数
+  // 把每条帖子的原文快照都拉一遍
+  async countPosts(): Promise<number> {
+    const row = [...this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM posts")][0];
+    return row?.n ?? 0;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -651,26 +645,6 @@ export class ChatRoom extends DurableObject<Env> {
         return;
       }
 
-      case "jump_to": {
-        const from = msg.from;
-        const to = msg.to;
-        if (
-          typeof from !== "number" ||
-          typeof to !== "number" ||
-          !Number.isInteger(from) ||
-          !Number.isInteger(to) ||
-          from < 1 ||
-          to < from
-        ) {
-          this.flagViolation(ws, state, "invalid jump range");
-          return;
-        }
-        writeState(ws, state);
-        const { available, messages, hasEarlier } = this.fetchHistoryRange(from, to);
-        ws.send(JSON.stringify({ type: "jump_to", available, from, messages, hasMore: hasEarlier }));
-        return;
-      }
-
       default:
         this.flagViolation(ws, state, "unknown message type");
     }
@@ -759,8 +733,19 @@ export class ChatRoom extends DurableObject<Env> {
       );
 
       if (extracted) {
+        // 原始消息拍个快照存进帖子自己的记录里,不再依赖 messages 表——
+        // 那张表只滚动保留最近 1000 条,快照才能保证"查看原文"永远看得到,
+        // 不会因为聊天室后来太活跃而失效
+        const sourceMessages: PostSourceMessage[] = rows.map((r) => ({
+          nickname: r.nickname,
+          hashId: r.hashId,
+          text: r.text,
+          ts: r.ts,
+        }));
+
         this.ctx.storage.sql.exec(
-          "INSERT INTO posts (id, title, summary, key_points, from_seq, to_seq, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO posts (id, title, summary, key_points, from_seq, to_seq, created_ts, source_messages) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           crypto.randomUUID(),
           extracted.title,
           extracted.summary,
@@ -768,7 +753,15 @@ export class ChatRoom extends DurableObject<Env> {
           rows[0].seq,
           maxSeq,
           Date.now(),
+          JSON.stringify(sourceMessages),
         );
+
+        // 轻量通知一下当时在线的人,不写进聊天记录、不用管——聊天页拿这个弹一下
+        // 自动消失的状态提示,不是持久化的系统消息
+        const notice = JSON.stringify({ type: "post_extracted", title: extracted.title });
+        for (const socket of this.ctx.getWebSockets()) {
+          safeSend(socket, notice);
+        }
       }
     } catch (err) {
       console.error("[extraction] failed", err);

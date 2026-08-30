@@ -49,9 +49,7 @@ export interface Messages {
     ogDescription: string;
     postsLinkLabel: string;
     postsLinkTitle: string;
-    viewingHistoryNotice: string;
-    backToLatestButton: string;
-    jumpUnavailable: string;
+    postExtractedNotice: string;
     errors: {
       nickname_invalid: string;
       nickname_required: string;
@@ -113,9 +111,7 @@ const MESSAGES: Record<Locale, Messages> = {
       ogDescription: "Live chat in #{room} on godot.chat",
       postsLinkLabel: "Posts",
       postsLinkTitle: "Topics automatically distilled from this room's chat",
-      viewingHistoryNotice: "Viewing a past conversation",
-      backToLatestButton: "Back to latest",
-      jumpUnavailable: "This part of the conversation is no longer available",
+      postExtractedNotice: "New post: {title}",
       errors: {
         nickname_invalid: "Invalid nickname",
         nickname_required: "Set a nickname first",
@@ -175,9 +171,7 @@ const MESSAGES: Record<Locale, Messages> = {
       ogDescription: "Chat en vivo en #{room} en godot.chat",
       postsLinkLabel: "Publicaciones",
       postsLinkTitle: "Temas destilados automáticamente del chat de esta sala",
-      viewingHistoryNotice: "Viendo una conversación pasada",
-      backToLatestButton: "Volver a lo último",
-      jumpUnavailable: "Esta parte de la conversación ya no está disponible",
+      postExtractedNotice: "Nueva publicación: {title}",
       errors: {
         nickname_invalid: "Apodo no válido",
         nickname_required: "Elige un apodo primero",
@@ -235,9 +229,7 @@ const MESSAGES: Record<Locale, Messages> = {
       ogDescription: "godot.chat 上的 #{room} 实时聊天室",
       postsLinkLabel: "帖子",
       postsLinkTitle: "从本房间聊天中自动析出的主题",
-      viewingHistoryNotice: "正在查看历史片段",
-      backToLatestButton: "返回最新",
-      jumpUnavailable: "这段对话已经不在保留范围内了",
+      postExtractedNotice: "新帖子:{title}",
       errors: {
         nickname_invalid: "昵称不合法",
         nickname_required: "请先设置昵称",
@@ -295,9 +287,7 @@ const MESSAGES: Record<Locale, Messages> = {
       ogDescription: "godot.chat 上的 #{room} 即時聊天室",
       postsLinkLabel: "貼文",
       postsLinkTitle: "從本房間聊天中自動析出的主題",
-      viewingHistoryNotice: "正在查看歷史片段",
-      backToLatestButton: "返回最新",
-      jumpUnavailable: "這段對話已經不在保留範圍內了",
+      postExtractedNotice: "新貼文:{title}",
       errors: {
         nickname_invalid: "暱稱不合法",
         nickname_required: "請先設定暱稱",
